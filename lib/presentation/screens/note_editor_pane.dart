@@ -27,7 +27,23 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
 
   Timer? _debounce;
   bool _preview = false;
+  bool _pendingFocus = true;
   String _lastLoaded = '';
+
+  void _requestEditorFocus({Duration delay = Duration.zero}) {
+    Future<void>.delayed(delay, () {
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        FocusScope.of(context).requestFocus(_focusNode);
+      });
+    });
+  }
+
+  void _markFocusPending({Duration delay = Duration.zero}) {
+    _pendingFocus = true;
+    _requestEditorFocus(delay: delay);
+  }
 
   @override
   void initState() {
@@ -35,12 +51,13 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     _controller = TextEditingController();
 
     _quickLaunchSub = ref.listenManual<int>(quickLaunchEventProvider, (previous, next) {
-      _focusNode.requestFocus();
+      if (_preview) {
+        setState(() => _preview = false);
+      }
+      _markFocusPending(delay: const Duration(milliseconds: 80));
     });
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _focusNode.requestFocus();
-    });
+    _markFocusPending();
   }
 
   @override
@@ -49,7 +66,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     if (oldWidget.noteId != widget.noteId) {
       _lastLoaded = '';
       _controller.text = '';
-      _focusNode.requestFocus();
+      _markFocusPending();
     }
   }
 
@@ -140,6 +157,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     return noteAsync.when(
       data: (note) {
         if (note == null) return const Center(child: Text('メモが見つかりません'));
+        if (_pendingFocus) {
+          _pendingFocus = false;
+          _requestEditorFocus();
+        }
 
         final content = note.content;
         if (_lastLoaded != content && _controller.text == _lastLoaded) {

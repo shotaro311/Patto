@@ -10,6 +10,9 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
     self.delegate = self
+    // アクティブなスペースにウィンドウを移動（Quick Launch用）
+    // 注意: .moveToActiveSpace と .canJoinAllSpaces は排他的なので両方設定できない
+    self.collectionBehavior.insert(.moveToActiveSpace)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
@@ -70,13 +73,15 @@ final class QuickLaunchMonitor {
 
   func start() {
     stop()
-    if startEventTap() { return }
+    let eventTapStarted = startEventTap()
     globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
       self?.handle(event: event)
     }
-    localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
-      self?.handle(event: event)
-      return event
+    if !eventTapStarted {
+      localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
+        self?.handle(event: event)
+        return event
+      }
     }
   }
 
@@ -184,17 +189,43 @@ final class QuickLaunchMonitor {
         ?? NSApp.windows.first(where: { $0.isVisible })
         ?? NSApp.windows.first
 
-      if !NSApp.isHidden, let window, window.isVisible, !window.isMiniaturized {
+      // アプリがアクティブで、ウィンドウがキーウィンドウで、表示されていて、ミニマイズされていない場合のみ隠す
+      // これにより、背面にあるウィンドウは前面に持ってこられる
+      let isActiveAndForeground = NSApp.isActive
+        && !NSApp.isHidden
+        && window?.isKeyWindow == true
+        && window?.isVisible == true
+        && window?.isMiniaturized == false
+
+      if isActiveAndForeground {
         NSApp.hide(nil)
         return
       }
 
+      // アプリを通常のアクティベーションポリシーに設定（メニューバーアプリなどでない場合に必要）
+      NSApp.setActivationPolicy(.regular)
+
       NSApp.unhide(nil)
-      NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
       if let window, window.isMiniaturized {
         window.deminiaturize(nil)
       }
+
+      // アプリをアクティベート
+      NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+      NSApp.activate(ignoringOtherApps: true)
+
+      // ウィンドウを前面に
       window?.makeKeyAndOrderFront(nil)
+      window?.orderFrontRegardless()
+
+      // 少し遅延を入れて再度前面に持ってくる（macOSのウィンドウマネージャーとの競合対策）
+      if let window {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+          NSApp.activate(ignoringOtherApps: true)
+          window.makeKeyAndOrderFront(nil)
+          window.orderFrontRegardless()
+        }
+      }
       self.channel.invokeMethod("onQuickLaunch", arguments: ["source": "macos"])
     }
   }
