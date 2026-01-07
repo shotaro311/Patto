@@ -50,6 +50,14 @@ class NoteRepository {
         .map((items) => items.isEmpty ? null : items.first);
   }
 
+  Stream<int> watchDirtyCount() {
+    return _isar.notes
+        .filter()
+        .isDirtyEqualTo(true)
+        .watch(fireImmediately: true)
+        .map((items) => items.length);
+  }
+
   Future<Note?> getNote(String id) async {
     return _isar.notes.where().uuidEqualTo(id).findFirst();
   }
@@ -115,19 +123,17 @@ class NoteRepository {
   }
 
   Future<void> markClean({
-    required Iterable<String> noteIds,
-    required DateTime syncedAt,
+    required Map<String, DateTime> serverUpdatedAtById,
   }) async {
-    final ids = noteIds.toList(growable: false);
-    if (ids.isEmpty) return;
+    if (serverUpdatedAtById.isEmpty) return;
 
     await _isar.writeTxn(() async {
-      for (final uuid in ids) {
-        final note = await _isar.notes.where().uuidEqualTo(uuid).findFirst();
+      for (final entry in serverUpdatedAtById.entries) {
+        final note = await _isar.notes.where().uuidEqualTo(entry.key).findFirst();
         if (note == null) continue;
         note
           ..isDirty = false
-          ..serverUpdatedAt = syncedAt;
+          ..serverUpdatedAt = entry.value;
         await _isar.notes.put(note);
       }
     });
@@ -137,6 +143,19 @@ class NoteRepository {
     if (remoteNotes.isEmpty) return;
     await _isar.writeTxn(() async {
       await _isar.notes.putAll(remoteNotes);
+    });
+  }
+
+  Future<void> purgeDeletedBefore(DateTime cutoff) async {
+    await _isar.writeTxn(() async {
+      await _isar.notes
+          .filter()
+          .isDeletedEqualTo(true)
+          .and()
+          .isDirtyEqualTo(false)
+          .and()
+          .serverUpdatedAtLessThan(cutoff)
+          .deleteAll();
     });
   }
 }

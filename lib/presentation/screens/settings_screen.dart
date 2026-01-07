@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
+import '../../data/models/note.dart';
 import '../../domain/app_settings.dart';
 import '../providers/ai_providers.dart';
 import '../providers/app_settings_controller.dart';
@@ -11,6 +12,7 @@ import '../providers/auth_providers.dart';
 import '../providers/note_repository_provider.dart';
 import '../providers/supabase_providers.dart';
 import '../providers/sync_providers.dart';
+import '../../services/sync_service.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -79,12 +81,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await ref.read(appSettingsProvider.notifier).setSyncEnabled(enabled);
     if (!enabled) return;
 
-    final userId = ref.read(supabaseUserIdProvider);
+    final userId = ref.read(authUserIdStreamProvider).valueOrNull;
     if (userId == null && mounted) {
       await Navigator.of(context).pushNamed('/auth');
     }
 
-    final userId2 = ref.read(supabaseUserIdProvider);
+    final userId2 = await ref.read(authUserIdStreamProvider.future);
     if (userId2 == null) {
       await ref.read(appSettingsProvider.notifier).setSyncEnabled(false);
       return;
@@ -106,10 +108,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
 
     setState(() => _syncing = true);
+    ref.read(syncInProgressProvider.notifier).state = true;
     try {
       final settings = ref.read(appSettingsProvider);
       final result = await service.syncNow(lastSyncAt: settings.lastSyncAt);
-      await ref.read(appSettingsProvider.notifier).setLastSyncAt(result.lastSyncAt);
+      if (result.lastSyncAt != null) {
+        await ref.read(appSettingsProvider.notifier).setLastSyncAt(result.lastSyncAt);
+      }
+
+      if (result.conflictDetails.isNotEmpty && mounted) {
+        final resolved = await _resolveConflicts(service, result.conflictDetails);
+        if (resolved && mounted) {
+          ref.read(syncConflictsProvider.notifier).state = [];
+        }
+      }
 
       if (!mounted) return;
       final msg =
@@ -120,8 +132,81 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('同期エラー: $e')));
     } finally {
+      ref.read(syncInProgressProvider.notifier).state = false;
       if (mounted) setState(() => _syncing = false);
     }
+  }
+
+  Future<bool> _resolveConflicts(
+    SyncService service,
+    List<SyncConflict> conflicts,
+  ) async {
+    for (var i = 0; i < conflicts.length; i++) {
+      final conflict = conflicts[i];
+      if (!mounted) return false;
+      final choice = await _showConflictDialog(conflict);
+      if (!mounted) return false;
+      if (choice == null || choice == _ConflictChoice.later) {
+        ref.read(syncConflictsProvider.notifier).state =
+            conflicts.sublist(i);
+        return false;
+      }
+
+      final resolution = choice == _ConflictChoice.keepLocal
+          ? SyncConflictResolution.keepLocal
+          : SyncConflictResolution.keepRemote;
+      await service.resolveConflict(conflict, resolution);
+    }
+    return true;
+  }
+
+  Future<_ConflictChoice?> _showConflictDialog(SyncConflict conflict) {
+    return showDialog<_ConflictChoice>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('同期の競合を解決'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _ConflictSection(
+                    title: 'ローカル',
+                    note: conflict.local,
+                    updatedAt: conflict.local.localUpdatedAt.toLocal(),
+                  ),
+                  const SizedBox(height: 16),
+                  _ConflictSection(
+                    title: 'クラウド',
+                    note: conflict.remote,
+                    updatedAt:
+                        conflict.remote.serverUpdatedAt?.toLocal() ??
+                        conflict.remote.localUpdatedAt.toLocal(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(_ConflictChoice.later),
+              child: const Text('後で'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(_ConflictChoice.keepRemote),
+              child: const Text('クラウドを採用'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(_ConflictChoice.keepLocal),
+              child: const Text('ローカルを採用'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -129,6 +214,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final settings = ref.watch(appSettingsProvider);
     final supabaseConfig = ref.watch(supabaseConfigProvider);
     final userIdAsync = ref.watch(authUserIdStreamProvider);
+    final pendingConflicts = ref.watch(syncConflictsProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('設定')),
@@ -178,6 +264,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     child: const Text('同期'),
                   ),
           ),
+          if (pendingConflicts.isNotEmpty)
+            ListTile(
+              title: Text('未解決の競合: ${pendingConflicts.length}件'),
+              trailing: FilledButton(
+                onPressed: () async {
+                  final service = ref.read(syncServiceProvider);
+                  if (service == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('同期にはログインが必要です')),
+                    );
+                    return;
+                  }
+                  final resolved =
+                      await _resolveConflicts(service, pendingConflicts);
+                  if (!mounted) return;
+                  if (resolved) {
+                    ref.read(syncConflictsProvider.notifier).state = [];
+                  }
+                },
+                child: const Text('解決する'),
+              ),
+            ),
           const Divider(height: 32),
           Text('クイック起動', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
@@ -276,6 +384,57 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+enum _ConflictChoice {
+  keepLocal,
+  keepRemote,
+  later,
+}
+
+class _ConflictSection extends StatelessWidget {
+  const _ConflictSection({
+    required this.title,
+    required this.note,
+    required this.updatedAt,
+  });
+
+  final String title;
+  final Note note;
+  final DateTime updatedAt;
+
+  @override
+  Widget build(BuildContext context) {
+    final displayTitle = note.title.trim().isEmpty ? '（無題）' : note.title.trim();
+    final content = note.content.trim().isEmpty ? '（本文なし）' : note.content.trim();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 4),
+        Text(displayTitle, style: Theme.of(context).textTheme.bodyMedium),
+        const SizedBox(height: 4),
+        Text(
+          '更新: ${updatedAt.toString()}',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 160),
+            child: SingleChildScrollView(child: Text(content)),
+          ),
+        ),
+      ],
     );
   }
 }

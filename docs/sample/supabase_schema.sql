@@ -56,7 +56,12 @@ create policy "Users can update own notes"
   on public.notes for update
   using (auth.uid() = user_id);
 
--- MVPでは論理削除（is_deleted）を使うため、DELETEは許可しない。
+drop policy if exists "Users can delete own notes" on public.notes;
+create policy "Users can delete own notes"
+  on public.notes for delete
+  using (auth.uid() = user_id);
+
+-- 削除済みは14日経過後に完全削除（パージ）するため、DELETEを許可する。
 
 -- Realtime（必要なら）
 do $$

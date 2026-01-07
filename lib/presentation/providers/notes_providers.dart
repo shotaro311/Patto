@@ -26,3 +26,8 @@ final noteByIdProvider = StreamProvider.family<Note?, String>((ref, id) {
   final repo = ref.watch(noteRepositoryProvider);
   return repo.watchNote(id);
 });
+
+final dirtyNotesCountProvider = StreamProvider<int>((ref) {
+  final repo = ref.watch(noteRepositoryProvider);
+  return repo.watchDirtyCount();
+});

@@ -74,14 +74,15 @@ final class QuickLaunchMonitor {
   func start() {
     stop()
     let eventTapStarted = startEventTap()
+    if eventTapStarted {
+      return
+    }
     globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
       self?.handle(event: event)
     }
-    if !eventTapStarted {
-      localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
-        self?.handle(event: event)
-        return event
-      }
+    localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
+      self?.handle(event: event)
+      return event
     }
   }
 
