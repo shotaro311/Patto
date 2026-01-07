@@ -22,14 +22,18 @@ class ShortcutService {
     await _channel.invokeMethod<void>('stop');
   }
 
-  void setOnQuickLaunch(void Function() onQuickLaunch) {
+  void setOnQuickLaunch(void Function(String? source) onQuickLaunch) {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'onQuickLaunch') {
-        onQuickLaunch();
+        final args = call.arguments;
+        String? source;
+        if (args is Map && args['source'] is String) {
+          source = args['source'] as String;
+        }
+        onQuickLaunch(source);
       }
     });
   }
 }
 
 const _channelName = 'com.patto/quick_launch';
-

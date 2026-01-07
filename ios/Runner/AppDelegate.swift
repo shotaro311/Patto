@@ -44,6 +44,25 @@ import UIKit
     completionHandler(true)
   }
 
+  override func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey : Any] = [:]
+  ) -> Bool {
+    if url.scheme == "patto", url.host == "quick-memo" {
+      emitQuickLaunch(source: "ios_widget")
+      return true
+    }
+    return super.application(app, open: url, options: options)
+  }
+
+  override func applicationDidBecomeActive(_ application: UIApplication) {
+    super.applicationDidBecomeActive(application)
+    if QuickMemoControlStore.consumeRequest() {
+      emitQuickLaunch(source: "ios_control")
+    }
+  }
+
   private func emitQuickLaunch(source: String) {
     quickLaunchChannel?.invokeMethod("onQuickLaunch", arguments: ["source": source])
   }

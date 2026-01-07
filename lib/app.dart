@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -65,7 +66,8 @@ class _PattoAppState extends ConsumerState<PattoApp> {
     super.dispose();
   }
 
-  Future<void> _handleQuickLaunch() async {
+  Future<void> _handleQuickLaunch(String? source) async {
+    ref.read(quickLaunchSourceProvider.notifier).state = source;
     final settings = ref.read(appSettingsProvider);
     switch (settings.quickLaunchOpenMode) {
       case QuickLaunchOpenMode.newNote:
@@ -75,7 +77,9 @@ class _PattoAppState extends ConsumerState<PattoApp> {
           return;
         }
         ref.read(quickMemoOpenProvider.notifier).state = true;
-        _navigatorKey.currentState?.push(_buildQuickMemoRoute());
+        final useMorph =
+            source == 'ios_control' && !Platform.isMacOS && Platform.isIOS;
+        _navigatorKey.currentState?.push(_buildQuickMemoRoute(useMorph: useMorph));
         ref.read(quickLaunchEventProvider.notifier).state++;
         return;
       case QuickLaunchOpenMode.lastNote:
@@ -103,7 +107,26 @@ class _PattoAppState extends ConsumerState<PattoApp> {
     }
   }
 
-  Route<void> _buildQuickMemoRoute() {
+  Route<void> _buildQuickMemoRoute({bool useMorph = false}) {
+    if (useMorph) {
+      return PageRouteBuilder(
+        settings: const RouteSettings(name: '/quick-memo'),
+        transitionDuration: const Duration(milliseconds: 360),
+        reverseTransitionDuration: const Duration(milliseconds: 220),
+        pageBuilder: (_, __, ___) => const QuickMemoScreen(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          final curve = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          );
+          return _QuickMemoMorphTransition(
+            animation: curve,
+            child: child,
+          );
+        },
+      );
+    }
     return PageRouteBuilder(
       settings: const RouteSettings(name: '/quick-memo'),
       transitionDuration: const Duration(milliseconds: 220),
@@ -149,6 +172,60 @@ class _PattoAppState extends ConsumerState<PattoApp> {
         '/settings': (_) => const SettingsScreen(),
         '/auth': (_) => const AuthScreen(),
       },
+    );
+  }
+}
+
+class _QuickMemoMorphTransition extends StatelessWidget {
+  const _QuickMemoMorphTransition({
+    required this.animation,
+    required this.child,
+  });
+
+  final Animation<double> animation;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final size = media.size;
+    final t = animation.value;
+    final width = lerpDouble(140, size.width, t)!;
+    final height = lerpDouble(38, size.height, t)!;
+    final radius = lerpDouble(20, 0, t)!;
+    final topInset = media.padding.top + 6;
+
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: ColoredBox(
+            color: Theme.of(context).scaffoldBackgroundColor,
+          ),
+        ),
+        Align(
+          alignment: Alignment.topCenter,
+          child: Padding(
+            padding: EdgeInsets.only(top: topInset),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(radius),
+              child: SizedBox(
+                width: width,
+                height: height,
+                child: OverflowBox(
+                  maxWidth: size.width,
+                  maxHeight: size.height,
+                  alignment: Alignment.topCenter,
+                  child: SizedBox(
+                    width: size.width,
+                    height: size.height,
+                    child: child,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
