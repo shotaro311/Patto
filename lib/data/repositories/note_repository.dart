@@ -84,14 +84,46 @@ class NoteRepository {
     await _isar.writeTxn(() async {
       final note = await _isar.notes.where().uuidEqualTo(id).findFirst();
       if (note == null) return;
+      final previousTitle = note.title;
+      final previousDerived = deriveTitleFromContent(note.content);
       note
         ..content = content
-        ..title = deriveTitleFromContent(content)
+        ..localUpdatedAt = DateTime.now()
+        ..syncVersion = note.syncVersion + 1
+        ..isDirty = true;
+      if (previousTitle.trim().isEmpty || previousTitle == previousDerived) {
+        note.title = deriveTitleFromContent(content);
+      }
+      await _isar.notes.put(note);
+    });
+  }
+
+  Future<void> updateTitle(String id, String title) async {
+    await _isar.writeTxn(() async {
+      final note = await _isar.notes.where().uuidEqualTo(id).findFirst();
+      if (note == null) return;
+      note
+        ..title = title
         ..localUpdatedAt = DateTime.now()
         ..syncVersion = note.syncVersion + 1
         ..isDirty = true;
       await _isar.notes.put(note);
     });
+  }
+
+  Future<bool> isTitleDuplicate({
+    required String title,
+    required String excludeId,
+  }) async {
+    final trimmed = title.trim();
+    if (trimmed.isEmpty) return false;
+    final matches = await _isar.notes
+        .filter()
+        .isDeletedEqualTo(false)
+        .and()
+        .titleEqualTo(trimmed, caseSensitive: false)
+        .findAll();
+    return matches.any((note) => note.uuid != excludeId);
   }
 
   Future<void> softDelete(String id) async {

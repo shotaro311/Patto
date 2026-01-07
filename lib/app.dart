@@ -28,10 +28,12 @@ class _PattoAppState extends ConsumerState<PattoApp> {
   final _navigatorKey = GlobalKey<NavigatorState>();
   ProviderSubscription<MacModifierKey>? _macModifierKeySub;
   ProviderSubscription<AsyncValue<int>>? _dirtyNotesSub;
+  late final NavigatorObserver _quickMemoObserver;
 
   @override
   void initState() {
     super.initState();
+    _quickMemoObserver = _QuickMemoNavigatorObserver(ref);
 
     final shortcutService = ref.read(shortcutServiceProvider);
     shortcutService.setOnQuickLaunch(_handleQuickLaunch);
@@ -68,10 +70,12 @@ class _PattoAppState extends ConsumerState<PattoApp> {
     switch (settings.quickLaunchOpenMode) {
       case QuickLaunchOpenMode.newNote:
         ref.read(quickMemoControllerProvider);
-        _navigatorKey.currentState?.popUntil((route) => route.isFirst);
-        _navigatorKey.currentState?.push(
-          MaterialPageRoute(builder: (_) => const QuickMemoScreen()),
-        );
+        if (ref.read(quickMemoOpenProvider)) {
+          ref.read(quickLaunchEventProvider.notifier).state++;
+          return;
+        }
+        ref.read(quickMemoOpenProvider.notifier).state = true;
+        _navigatorKey.currentState?.push(_buildQuickMemoRoute());
         ref.read(quickLaunchEventProvider.notifier).state++;
         return;
       case QuickLaunchOpenMode.lastNote:
@@ -99,6 +103,37 @@ class _PattoAppState extends ConsumerState<PattoApp> {
     }
   }
 
+  Route<void> _buildQuickMemoRoute() {
+    return PageRouteBuilder(
+      settings: const RouteSettings(name: '/quick-memo'),
+      transitionDuration: const Duration(milliseconds: 220),
+      reverseTransitionDuration: const Duration(milliseconds: 180),
+      pageBuilder: (_, __, ___) => const QuickMemoScreen(),
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        final curve = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        final offsetTween =
+            Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero);
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: ColoredBox(
+                color: Theme.of(context).scaffoldBackgroundColor,
+              ),
+            ),
+            SlideTransition(
+              position: offsetTween.animate(curve),
+              child: child,
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -108,11 +143,61 @@ class _PattoAppState extends ConsumerState<PattoApp> {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
       ),
       navigatorKey: _navigatorKey,
+      navigatorObservers: [_quickMemoObserver],
       routes: {
         '/': (_) => const NotesHomeScreen(),
         '/settings': (_) => const SettingsScreen(),
         '/auth': (_) => const AuthScreen(),
       },
     );
+  }
+}
+
+class _QuickMemoNavigatorObserver extends NavigatorObserver {
+  _QuickMemoNavigatorObserver(this._ref);
+
+  final WidgetRef _ref;
+
+  bool _isQuickMemo(Route<dynamic>? route) {
+    return route?.settings.name == '/quick-memo';
+  }
+
+  void _setOpen(bool value) {
+    _ref.read(quickMemoOpenProvider.notifier).state = value;
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (_isQuickMemo(route)) {
+      _setOpen(true);
+    }
+    super.didPush(route, previousRoute);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (_isQuickMemo(route)) {
+      _setOpen(false);
+    }
+    super.didPop(route, previousRoute);
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (_isQuickMemo(route)) {
+      _setOpen(false);
+    }
+    super.didRemove(route, previousRoute);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    if (_isQuickMemo(oldRoute)) {
+      _setOpen(false);
+    }
+    if (_isQuickMemo(newRoute)) {
+      _setOpen(true);
+    }
+    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
   }
 }

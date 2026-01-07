@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/note.dart';
 import '../providers/app_settings_controller.dart';
 import '../providers/notes_providers.dart';
+import '../providers/quick_launch_provider.dart';
 import '../providers/quick_memo_provider.dart';
 
 class QuickMemoScreen extends ConsumerStatefulWidget {
@@ -18,11 +18,17 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   final _focusNode = FocusNode();
   final _controller = TextEditingController();
   String _lastLoaded = '';
-  bool _preview = false;
+  ProviderSubscription<int>? _quickLaunchSub;
 
   @override
   void initState() {
     super.initState();
+    _quickLaunchSub = ref.listenManual<int>(quickLaunchEventProvider, (_, __) {
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) FocusScope.of(context).requestFocus(_focusNode);
+      });
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) FocusScope.of(context).requestFocus(_focusNode);
     });
@@ -30,6 +36,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
 
   @override
   void dispose() {
+    _quickLaunchSub?.close();
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -77,36 +84,29 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       appBar: AppBar(
         title: Text(display),
         actions: [
-          IconButton(
-            tooltip: _preview ? '編集' : 'プレビュー',
-            onPressed: () => setState(() => _preview = !_preview),
-            icon: Icon(_preview ? Icons.edit : Icons.preview),
-          ),
           TextButton(
             onPressed: _save,
             child: const Text('保存'),
           ),
         ],
       ),
-      body: _preview
-          ? Markdown(data: _controller.text)
-          : Padding(
-              padding: const EdgeInsets.all(12),
-              child: TextField(
-                controller: _controller,
-                focusNode: _focusNode,
-                maxLines: null,
-                expands: true,
-                textAlign: TextAlign.left,
-                textAlignVertical: TextAlignVertical.top,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  hintText: 'クイックメモを書く…',
-                ),
-                onChanged: (value) =>
-                    ref.read(quickMemoControllerProvider.notifier).updateContent(value),
-              ),
-            ),
+      body: Padding(
+        padding: const EdgeInsets.all(12),
+        child: TextField(
+          controller: _controller,
+          focusNode: _focusNode,
+          maxLines: null,
+          expands: true,
+          textAlign: TextAlign.left,
+          textAlignVertical: TextAlignVertical.top,
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            hintText: 'クイックメモを書く…',
+          ),
+          onChanged: (value) =>
+              ref.read(quickMemoControllerProvider.notifier).updateContent(value),
+        ),
+      ),
     );
   }
 }

@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/note.dart';
@@ -22,13 +21,16 @@ class NoteEditorPane extends ConsumerStatefulWidget {
 
 class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   final _focusNode = FocusNode();
+  final _titleFocusNode = FocusNode();
   late final TextEditingController _controller;
+  late final TextEditingController _titleController;
   ProviderSubscription<int>? _quickLaunchSub;
 
   Timer? _debounce;
-  bool _preview = false;
   bool _pendingFocus = true;
   String _lastLoaded = '';
+  String _lastTitleLoaded = '';
+  bool _editingTitle = false;
 
   void _requestEditorFocus({Duration delay = Duration.zero}) {
     Future<void>.delayed(delay, () {
@@ -49,11 +51,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   void initState() {
     super.initState();
     _controller = TextEditingController();
+    _titleController = TextEditingController();
 
     _quickLaunchSub = ref.listenManual<int>(quickLaunchEventProvider, (previous, next) {
-      if (_preview) {
-        setState(() => _preview = false);
-      }
       _markFocusPending(delay: const Duration(milliseconds: 80));
     });
 
@@ -65,7 +65,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.noteId != widget.noteId) {
       _lastLoaded = '';
+      _lastTitleLoaded = '';
       _controller.text = '';
+      _titleController.text = '';
+      _editingTitle = false;
       _markFocusPending();
     }
   }
@@ -75,6 +78,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     _debounce?.cancel();
     _quickLaunchSub?.close();
     _controller.dispose();
+    _titleController.dispose();
+    _titleFocusNode.dispose();
     _focusNode.dispose();
     super.dispose();
   }
@@ -94,6 +99,33 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     if (mounted && Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     }
+  }
+
+  Future<void> _commitTitle(Note note) async {
+    final next = _titleController.text.trim();
+    final current = note.title.trim();
+    if (next == current) {
+      if (mounted) setState(() => _editingTitle = false);
+      return;
+    }
+
+    if (next.isNotEmpty) {
+      final repo = ref.read(noteRepositoryProvider);
+      final duplicated =
+          await repo.isTitleDuplicate(title: next, excludeId: note.uuid);
+      if (duplicated) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('同じタイトルのメモが既にあります')),
+        );
+        FocusScope.of(context).requestFocus(_titleFocusNode);
+        return;
+      }
+    }
+
+    final repo = ref.read(noteRepositoryProvider);
+    await repo.updateTitle(note.uuid, next);
+    if (mounted) setState(() => _editingTitle = false);
   }
 
   Future<void> _openAiEditDialog(Note note) async {
@@ -173,6 +205,12 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
 
         final title = note.title.trim();
         final display = title.isEmpty ? '（無題）' : title;
+        if (!_editingTitle &&
+            (_lastTitleLoaded != note.title ||
+                _titleController.text == _lastTitleLoaded)) {
+          _titleController.text = note.title;
+          _lastTitleLoaded = note.title;
+        }
 
         return Column(
           children: [
@@ -183,22 +221,44 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                 child: Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        display,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
+                      child: _editingTitle
+                          ? TextField(
+                              controller: _titleController,
+                              focusNode: _titleFocusNode,
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                border: OutlineInputBorder(),
+                                hintText: 'タイトルを入力',
+                              ),
+                              textInputAction: TextInputAction.done,
+                              onEditingComplete: () => _commitTitle(note),
+                              onSubmitted: (_) => _commitTitle(note),
+                            )
+                          : GestureDetector(
+                              onTap: () {
+                                setState(() => _editingTitle = true);
+                                WidgetsBinding.instance.addPostFrameCallback((_) {
+                                  if (!mounted) return;
+                                  _titleController.selection = TextSelection(
+                                    baseOffset: 0,
+                                    extentOffset: _titleController.text.length,
+                                  );
+                                  FocusScope.of(context)
+                                      .requestFocus(_titleFocusNode);
+                                });
+                              },
+                              child: Text(
+                                display,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                            ),
                     ),
                     IconButton(
                       tooltip: 'AI編集',
                       onPressed: () => _openAiEditDialog(note),
                       icon: const Icon(Icons.auto_fix_high),
-                    ),
-                    IconButton(
-                      tooltip: _preview ? '編集' : 'プレビュー',
-                      onPressed: () => setState(() => _preview = !_preview),
-                      icon: Icon(_preview ? Icons.edit : Icons.preview),
                     ),
                     IconButton(
                       tooltip: '削除',
@@ -211,24 +271,22 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
             ),
             const Divider(height: 1),
             Expanded(
-              child: _preview
-                  ? Markdown(data: _controller.text)
-                  : Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: TextField(
-                        controller: _controller,
-                        focusNode: _focusNode,
-                        maxLines: null,
-                        expands: true,
-                        textAlign: TextAlign.left,
-                        textAlignVertical: TextAlignVertical.top,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          hintText: 'メモを書く…',
-                        ),
-                        onChanged: (_) => _scheduleSave(),
-                      ),
-                    ),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: TextField(
+                  controller: _controller,
+                  focusNode: _focusNode,
+                  maxLines: null,
+                  expands: true,
+                  textAlign: TextAlign.left,
+                  textAlignVertical: TextAlignVertical.top,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: 'メモを書く…',
+                  ),
+                  onChanged: (_) => _scheduleSave(),
+                ),
+              ),
             ),
           ],
         );

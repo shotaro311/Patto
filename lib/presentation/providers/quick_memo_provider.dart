@@ -18,6 +18,8 @@ final quickMemoControllerProvider =
   return QuickMemoController(ref);
 });
 
+final quickMemoOpenProvider = StateProvider<bool>((ref) => false);
+
 class QuickMemoState {
   const QuickMemoState({
     required this.content,
