@@ -10,7 +10,6 @@ import '../providers/ai_providers.dart';
 import '../providers/app_settings_controller.dart';
 import '../providers/auth_providers.dart';
 import '../providers/note_repository_provider.dart';
-import '../providers/supabase_providers.dart';
 import '../providers/sync_providers.dart';
 import '../../services/sync_service.dart';
 

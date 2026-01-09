@@ -113,7 +113,8 @@ class _PattoAppState extends ConsumerState<PattoApp> {
         settings: const RouteSettings(name: '/quick-memo'),
         transitionDuration: const Duration(milliseconds: 360),
         reverseTransitionDuration: const Duration(milliseconds: 220),
-        pageBuilder: (_, __, ___) => const QuickMemoScreen(),
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const QuickMemoScreen(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           final curve = CurvedAnimation(
             parent: animation,
@@ -131,7 +132,8 @@ class _PattoAppState extends ConsumerState<PattoApp> {
       settings: const RouteSettings(name: '/quick-memo'),
       transitionDuration: const Duration(milliseconds: 220),
       reverseTransitionDuration: const Duration(milliseconds: 180),
-      pageBuilder: (_, __, ___) => const QuickMemoScreen(),
+      pageBuilder: (context, animation, secondaryAnimation) =>
+          const QuickMemoScreen(),
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
         final curve = CurvedAnimation(
           parent: animation,
@@ -160,7 +162,7 @@ class _PattoAppState extends ConsumerState<PattoApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Patto',
+      title: 'Patto!',
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),

@@ -1,4 +1,4 @@
--- Patto / Supabase schema (MVP)
+-- Patto! / Supabase schema (MVP)
 -- 1) Supabase SQL editor で実行してください。
 
 -- gen_random_uuid() 用

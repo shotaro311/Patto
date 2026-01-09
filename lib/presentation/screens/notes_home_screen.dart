@@ -19,7 +19,7 @@ class NotesHomeScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Patto'),
+        title: const Text('Patto!'),
         actions: [
           IconButton(
             tooltip: '設定',

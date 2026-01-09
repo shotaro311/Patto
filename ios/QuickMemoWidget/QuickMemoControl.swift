@@ -7,7 +7,7 @@ enum QuickMemoTarget: String, AppEnum {
   case quickMemo
 
   static var typeDisplayRepresentation: TypeDisplayRepresentation {
-    TypeDisplayRepresentation(name: "Patto")
+    TypeDisplayRepresentation(name: "Patto!")
   }
 
   static var caseDisplayRepresentations: [QuickMemoTarget: DisplayRepresentation] {

@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/providers.dart';
 import '../../data/models/note.dart';
 import '../../data/repositories/quick_memo_repository.dart';
-import '../../data/repositories/note_repository.dart';
 import 'note_repository_provider.dart';
 
 final quickMemoRepositoryProvider = Provider<QuickMemoRepository>((ref) {

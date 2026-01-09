@@ -23,12 +23,15 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   @override
   void initState() {
     super.initState();
-    _quickLaunchSub = ref.listenManual<int>(quickLaunchEventProvider, (_, __) {
+    _quickLaunchSub = ref.listenManual<int>(
+      quickLaunchEventProvider,
+      (previous, next) {
       if (!mounted) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) FocusScope.of(context).requestFocus(_focusNode);
       });
-    });
+      },
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) FocusScope.of(context).requestFocus(_focusNode);
     });
