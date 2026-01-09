@@ -4,11 +4,11 @@
 
 本プライバシーポリシーは、Patto!（iOS / macOS）に適用されます。
 
-## 0. 事業者情報（要入力）
+## 0. 事業者情報
 
-- 事業者名（運営者名）: TODO
-- 連絡先メールアドレス: TODO
-- Webサイト/プライバシーポリシー公開URL: TODO
+- 事業者名（運営者名）: Shoutaro Matsumoto
+- 連絡先メールアドレス: matsumoto.b.a@gmail.com
+- Webサイト/プライバシーポリシー公開URL: https://shotaro311.github.io/Patto/privacy/
 
 ## 1. 取得する情報
 
