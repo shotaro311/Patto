@@ -6,6 +6,7 @@ import '../providers/app_settings_controller.dart';
 import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
 import '../providers/quick_memo_provider.dart';
+import '../widgets/app_input_decoration.dart';
 
 class QuickMemoScreen extends ConsumerStatefulWidget {
   const QuickMemoScreen({super.key});
@@ -102,10 +103,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
           expands: true,
           textAlign: TextAlign.left,
           textAlignVertical: TextAlignVertical.top,
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
-            hintText: 'クイックメモを書く…',
-          ),
+          decoration: appInputDecoration(hintText: 'クイックメモを書く…'),
           onChanged: (value) =>
               ref.read(quickMemoControllerProvider.notifier).updateContent(value),
         ),

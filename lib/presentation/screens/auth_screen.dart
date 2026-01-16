@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/auth_providers.dart';
+import '../widgets/app_input_decoration.dart';
 
 class AuthScreen extends ConsumerStatefulWidget {
   const AuthScreen({super.key});
@@ -55,20 +56,14 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         children: [
           TextField(
             controller: _emailController,
-            decoration: const InputDecoration(
-              labelText: 'メールアドレス',
-              border: OutlineInputBorder(),
-            ),
+            decoration: appInputDecoration(labelText: 'メールアドレス'),
             keyboardType: TextInputType.emailAddress,
             autofillHints: const [AutofillHints.email],
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _passwordController,
-            decoration: const InputDecoration(
-              labelText: 'パスワード',
-              border: OutlineInputBorder(),
-            ),
+            decoration: appInputDecoration(labelText: 'パスワード'),
             obscureText: true,
             autofillHints: const [AutofillHints.password],
           ),
@@ -113,4 +108,3 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     );
   }
 }
-

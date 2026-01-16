@@ -11,6 +11,7 @@ import '../providers/app_settings_controller.dart';
 import '../providers/auth_providers.dart';
 import '../providers/note_repository_provider.dart';
 import '../providers/sync_providers.dart';
+import '../widgets/app_input_decoration.dart';
 import '../../services/sync_service.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -363,9 +364,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           TextField(
             controller: _aiKeyController,
             obscureText: !_aiKeyVisible,
-            decoration: InputDecoration(
+            decoration: appInputDecoration(
               labelText: 'APIキーを入力して保存',
-              border: const OutlineInputBorder(),
               suffixIcon: IconButton(
                 tooltip: _aiKeyVisible ? '隠す' : '表示',
                 onPressed: () => setState(() => _aiKeyVisible = !_aiKeyVisible),

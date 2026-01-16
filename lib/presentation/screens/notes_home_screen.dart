@@ -5,6 +5,7 @@ import '../../data/models/note.dart';
 import '../providers/app_settings_controller.dart';
 import '../providers/note_repository_provider.dart';
 import '../providers/notes_providers.dart';
+import '../widgets/app_input_decoration.dart';
 import 'note_editor_pane.dart';
 import 'note_editor_screen.dart';
 
@@ -102,10 +103,9 @@ class _NotesList extends ConsumerWidget {
         Padding(
           padding: const EdgeInsets.all(12),
           child: TextField(
-            decoration: const InputDecoration(
+            decoration: appInputDecoration(
               hintText: '検索',
-              prefixIcon: Icon(Icons.search),
-              border: OutlineInputBorder(),
+              prefixIcon: const Icon(Icons.search),
               isDense: true,
             ),
             onChanged: (v) => ref.read(notesSearchQueryProvider.notifier).state = v,

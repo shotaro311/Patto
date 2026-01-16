@@ -9,6 +9,7 @@ import '../providers/app_settings_controller.dart';
 import '../providers/note_repository_provider.dart';
 import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
+import '../widgets/app_input_decoration.dart';
 
 class NoteEditorPane extends ConsumerStatefulWidget {
   const NoteEditorPane({super.key, required this.noteId});
@@ -246,10 +247,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                           ? TextField(
                               controller: _titleController,
                               focusNode: _titleFocusNode,
-                              decoration: const InputDecoration(
-                                isDense: true,
-                                border: OutlineInputBorder(),
+                              decoration: appInputDecoration(
                                 hintText: 'タイトルを入力',
+                                isDense: true,
                               ),
                               onChanged: (_) => _scheduleTitleSave(note),
                               textInputAction: TextInputAction.done,
@@ -302,10 +302,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                   expands: true,
                   textAlign: TextAlign.left,
                   textAlignVertical: TextAlignVertical.top,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    hintText: 'メモを書く…',
-                  ),
+                  decoration: appInputDecoration(hintText: 'メモを書く…'),
                   onChanged: (_) => _scheduleSave(),
                 ),
               ),
@@ -373,10 +370,7 @@ class _AiEditDialogState extends ConsumerState<_AiEditDialog> {
             const SizedBox(height: 8),
             TextField(
               controller: _instructionController,
-              decoration: const InputDecoration(
-                labelText: '指示（例: もっと丁寧に）',
-                border: OutlineInputBorder(),
-              ),
+              decoration: appInputDecoration(labelText: '指示（例: もっと丁寧に）'),
               minLines: 1,
               maxLines: 3,
             ),
