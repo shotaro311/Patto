@@ -59,6 +59,7 @@ final class QuickLaunchMonitor {
   private var globalMonitor: Any?
   private var localMonitor: Any?
 
+  private var lastHandledAt: TimeInterval = 0
   private var lastTapAt: TimeInterval = 0
   private var tapCount: Int = 0
 
@@ -73,17 +74,22 @@ final class QuickLaunchMonitor {
 
   func start() {
     stop()
-    let eventTapStarted = startEventTap()
-    if eventTapStarted {
-      return
+
+    if #available(macOS 10.15, *) {
+      if !CGPreflightListenEventAccess() {
+        CGRequestListenEventAccess()
+      }
     }
-    globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
-      self?.handle(event: event)
-    }
+
     localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
-      self?.handle(event: event)
+      self?.handle(event: event, isGlobal: false)
       return event
     }
+    globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
+      self?.handle(event: event, isGlobal: true)
+    }
+
+    _ = startEventTap()
   }
 
   func stop() {
@@ -104,6 +110,7 @@ final class QuickLaunchMonitor {
     }
     globalMonitor = nil
     localMonitor = nil
+    lastHandledAt = 0
     lastTapAt = 0
     tapCount = 0
   }
@@ -141,6 +148,9 @@ final class QuickLaunchMonitor {
   }
 
   private func handleEventTap(type: CGEventType, event: CGEvent) {
+    // アプリが「前面かつ表示中」のときは、localMonitor側で拾えるのでeventTap側は無視して二重発火を防ぐ
+    // ※非表示（NSApp.isHidden）の場合は、アクティブ扱いになるケースがあるため、isHiddenも併せて判定する
+    guard !(NSApp.isActive && !NSApp.isHidden) else { return }
     switch type {
     case .flagsChanged:
       break
@@ -159,7 +169,11 @@ final class QuickLaunchMonitor {
     handleTap()
   }
 
-  private func handle(event: NSEvent) {
+  private func handle(event: NSEvent, isGlobal: Bool) {
+    // 前面かつ表示中のときはlocalMonitorで十分なので、globalMonitorは無視して二重発火を防ぐ
+    if isGlobal && NSApp.isActive && !NSApp.isHidden {
+      return
+    }
     guard modifierKey.keyCodes.contains(event.keyCode) else { return }
     guard modifierKey.isDown(event.modifierFlags) else { return }
 
@@ -168,6 +182,10 @@ final class QuickLaunchMonitor {
 
   private func handleTap() {
     let now = ProcessInfo.processInfo.systemUptime
+    if now - lastHandledAt <= 0.05 {
+      return
+    }
+    lastHandledAt = now
     if now - lastTapAt <= 0.35 {
       tapCount += 1
     } else {

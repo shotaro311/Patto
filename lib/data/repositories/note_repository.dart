@@ -85,13 +85,12 @@ class NoteRepository {
       final note = await _isar.notes.where().uuidEqualTo(id).findFirst();
       if (note == null) return;
       final previousTitle = note.title;
-      final previousDerived = deriveTitleFromContent(note.content);
       note
         ..content = content
         ..localUpdatedAt = DateTime.now()
         ..syncVersion = note.syncVersion + 1
         ..isDirty = true;
-      if (previousTitle.trim().isEmpty || previousTitle == previousDerived) {
+      if (previousTitle.trim().isEmpty) {
         note.title = deriveTitleFromContent(content);
       }
       await _isar.notes.put(note);

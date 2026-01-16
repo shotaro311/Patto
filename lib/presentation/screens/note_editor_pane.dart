@@ -27,10 +27,12 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   ProviderSubscription<int>? _quickLaunchSub;
 
   Timer? _debounce;
+  Timer? _titleDebounce;
   bool _pendingFocus = true;
   String _lastLoaded = '';
   String _lastTitleLoaded = '';
   bool _editingTitle = false;
+  String? _lastDuplicateTitle;
 
   void _requestEditorFocus({Duration delay = Duration.zero}) {
     Future<void>.delayed(delay, () {
@@ -64,11 +66,13 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   void didUpdateWidget(covariant NoteEditorPane oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.noteId != widget.noteId) {
+      _titleDebounce?.cancel();
       _lastLoaded = '';
       _lastTitleLoaded = '';
       _controller.text = '';
       _titleController.text = '';
       _editingTitle = false;
+      _lastDuplicateTitle = null;
       _markFocusPending();
     }
   }
@@ -76,6 +80,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _titleDebounce?.cancel();
     _quickLaunchSub?.close();
     _controller.dispose();
     _titleController.dispose();
@@ -102,10 +107,21 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   }
 
   Future<void> _commitTitle(Note note) async {
+    await _saveTitle(note, exitOnSuccess: true);
+  }
+
+  void _scheduleTitleSave(Note note) {
+    _titleDebounce?.cancel();
+    _titleDebounce = Timer(const Duration(milliseconds: 250), () async {
+      await _saveTitle(note, exitOnSuccess: false);
+    });
+  }
+
+  Future<void> _saveTitle(Note note, {required bool exitOnSuccess}) async {
     final next = _titleController.text.trim();
     final current = note.title.trim();
     if (next == current) {
-      if (mounted) setState(() => _editingTitle = false);
+      if (exitOnSuccess && mounted) setState(() => _editingTitle = false);
       return;
     }
 
@@ -114,18 +130,23 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       final duplicated =
           await repo.isTitleDuplicate(title: next, excludeId: note.uuid);
       if (duplicated) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('同じタイトルのメモが既にあります')),
-        );
-        FocusScope.of(context).requestFocus(_titleFocusNode);
+        if (mounted && _lastDuplicateTitle != next) {
+          _lastDuplicateTitle = next;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('同じタイトルのメモが既にあります')),
+          );
+        }
+        if (exitOnSuccess && mounted) {
+          FocusScope.of(context).requestFocus(_titleFocusNode);
+        }
         return;
       }
     }
 
+    _lastDuplicateTitle = null;
     final repo = ref.read(noteRepositoryProvider);
     await repo.updateTitle(note.uuid, next);
-    if (mounted) setState(() => _editingTitle = false);
+    if (exitOnSuccess && mounted) setState(() => _editingTitle = false);
   }
 
   Future<void> _openAiEditDialog(Note note) async {
@@ -230,6 +251,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                 border: OutlineInputBorder(),
                                 hintText: 'タイトルを入力',
                               ),
+                              onChanged: (_) => _scheduleTitleSave(note),
                               textInputAction: TextInputAction.done,
                               onEditingComplete: () => _commitTitle(note),
                               onSubmitted: (_) => _commitTitle(note),
