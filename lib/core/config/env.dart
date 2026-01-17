@@ -3,7 +3,7 @@ class Env {
   static const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
 
   static const aiModelName =
-      String.fromEnvironment('AI_MODEL_NAME', defaultValue: 'gemini-1.5-flash');
+      String.fromEnvironment('AI_MODEL_NAME', defaultValue: 'gemini-3-flash-preview');
 }
 
 class SupabaseConfig {

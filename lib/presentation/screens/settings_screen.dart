@@ -34,7 +34,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final repo = ref.read(aiKeyRepositoryProvider);
       final key = await repo.readKey();
       if (!mounted) return;
-      setState(() => _aiKeyRegistered = key != null && key.isNotEmpty);
+      setState(() {
+        if (_aiKeyRegistered) return;
+        _aiKeyRegistered = key != null && key.isNotEmpty;
+      });
     });
   }
 
@@ -48,7 +51,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final value = _aiKeyController.text.trim();
     if (value.isEmpty) return;
     final repo = ref.read(aiKeyRepositoryProvider);
-    await repo.writeKey(value);
+    try {
+      await repo.writeKey(value);
+      final confirmed = await repo.readKey();
+      if (confirmed == null || confirmed.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('AI APIキーの保存に失敗しました')),
+        );
+        return;
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('AI APIキーの保存に失敗しました')),
+      );
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _aiKeyRegistered = true;
