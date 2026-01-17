@@ -2,12 +2,19 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../domain/app_settings.dart';
 import '../../services/sync_service.dart';
 import 'app_settings_controller.dart';
 import 'sync_providers.dart';
 
 final autoSyncControllerProvider = Provider<AutoSyncController>((ref) {
   final controller = AutoSyncController(ref);
+  final settings = ref.read(appSettingsProvider);
+  controller.setSyncEnabled(settings.syncEnabled);
+  ref.listen<AppSettings>(
+    appSettingsProvider,
+    (previous, next) => controller.setSyncEnabled(next.syncEnabled),
+  );
   ref.onDispose(controller.dispose);
   return controller;
 });
@@ -17,8 +24,24 @@ class AutoSyncController {
 
   final Ref _ref;
   Timer? _timer;
+  Timer? _pollTimer;
   bool _syncing = false;
   bool _pending = false;
+  bool _enabled = false;
+  static const Duration _pollInterval = Duration(seconds: 20);
+
+  void setSyncEnabled(bool enabled) {
+    if (_enabled == enabled) return;
+    _enabled = enabled;
+    if (_enabled) {
+      _startPolling();
+      schedule(delay: Duration.zero);
+    } else {
+      _stopPolling();
+      _pending = false;
+      _timer?.cancel();
+    }
+  }
 
   void schedule({Duration delay = const Duration(seconds: 1)}) {
     _pending = true;
@@ -28,6 +51,19 @@ class AutoSyncController {
 
   void dispose() {
     _timer?.cancel();
+    _stopPolling();
+  }
+
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(_pollInterval, (_) {
+      schedule(delay: Duration.zero);
+    });
+  }
+
+  void _stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
   }
 
   Future<void> _run() async {

@@ -170,6 +170,18 @@ class NoteRepository {
     });
   }
 
+  Future<void> markCleanLocal({required List<String> ids}) async {
+    if (ids.isEmpty) return;
+    await _isar.writeTxn(() async {
+      for (final id in ids) {
+        final note = await _isar.notes.where().uuidEqualTo(id).findFirst();
+        if (note == null) continue;
+        note.isDirty = false;
+        await _isar.notes.put(note);
+      }
+    });
+  }
+
   Future<void> upsertFromRemote(List<Note> remoteNotes) async {
     if (remoteNotes.isEmpty) return;
     await _isar.writeTxn(() async {

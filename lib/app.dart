@@ -7,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'domain/app_settings.dart';
 import 'presentation/providers/app_settings_controller.dart';
 import 'presentation/providers/auto_sync_provider.dart';
-import 'presentation/providers/note_repository_provider.dart';
 import 'presentation/providers/notes_providers.dart';
 import 'presentation/providers/quick_launch_provider.dart';
 import 'presentation/providers/quick_memo_provider.dart';
@@ -25,7 +24,8 @@ class PattoApp extends ConsumerStatefulWidget {
   ConsumerState<PattoApp> createState() => _PattoAppState();
 }
 
-class _PattoAppState extends ConsumerState<PattoApp> {
+class _PattoAppState extends ConsumerState<PattoApp>
+    with WidgetsBindingObserver {
   final _navigatorKey = GlobalKey<NavigatorState>();
   ProviderSubscription<MacModifierKey>? _macModifierKeySub;
   ProviderSubscription<AsyncValue<int>>? _dirtyNotesSub;
@@ -34,6 +34,7 @@ class _PattoAppState extends ConsumerState<PattoApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _quickMemoObserver = _QuickMemoNavigatorObserver(ref);
 
     final shortcutService = ref.read(shortcutServiceProvider);
@@ -61,14 +62,28 @@ class _PattoAppState extends ConsumerState<PattoApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _macModifierKeySub?.close();
     _dirtyNotesSub?.close();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      ref.read(autoSyncControllerProvider).schedule(delay: Duration.zero);
+    }
+  }
+
   Future<void> _handleQuickLaunch(String? source) async {
     ref.read(quickLaunchSourceProvider.notifier).state = source;
     final settings = ref.read(appSettingsProvider);
+    if (Platform.isMacOS &&
+        source == 'macos' &&
+        settings.quickLaunchOpenMode == QuickLaunchOpenMode.lastNote) {
+      ref.read(quickLaunchEventProvider.notifier).state++;
+      return;
+    }
     switch (settings.quickLaunchOpenMode) {
       case QuickLaunchOpenMode.newNote:
         ref.read(quickMemoControllerProvider);
@@ -83,25 +98,24 @@ class _PattoAppState extends ConsumerState<PattoApp> {
         ref.read(quickLaunchEventProvider.notifier).state++;
         return;
       case QuickLaunchOpenMode.lastNote:
-        final repo = ref.read(noteRepositoryProvider);
-        late final String noteId;
         final last = settings.lastOpenedNoteId;
         if (last == null) {
-          final note = await repo.createNote();
-          noteId = note.uuid;
-        } else {
-          noteId = last;
+          if (!Platform.isMacOS) {
+            _navigatorKey.currentState?.popUntil((route) => route.isFirst);
+          }
+          ref.read(quickLaunchEventProvider.notifier).state++;
+          return;
         }
 
-        ref.read(selectedNoteIdProvider.notifier).state = noteId;
-        await ref.read(appSettingsProvider.notifier).setLastOpenedNoteId(noteId);
+        ref.read(selectedNoteIdProvider.notifier).state = last;
+        await ref.read(appSettingsProvider.notifier).setLastOpenedNoteId(last);
 
         ref.read(quickLaunchEventProvider.notifier).state++;
 
         if (!Platform.isMacOS) {
           _navigatorKey.currentState?.popUntil((route) => route.isFirst);
           _navigatorKey.currentState?.push(
-            MaterialPageRoute(builder: (_) => NoteEditorScreen(noteId: noteId)),
+            MaterialPageRoute(builder: (_) => NoteEditorScreen(noteId: last)),
           );
         }
     }

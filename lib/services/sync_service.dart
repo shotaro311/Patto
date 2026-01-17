@@ -24,6 +24,15 @@ class SyncService {
     final purgeCutoff = syncedAt.subtract(_purgeAfter);
 
     final dirty = await _noteRepository.listDirtyNotes();
+    final emptyDirty = <Note>[];
+    final effectiveDirty = <Note>[];
+    for (final note in dirty) {
+      if (!note.isDeleted && _isEmptyNote(note)) {
+        emptyDirty.add(note);
+      } else {
+        effectiveDirty.add(note);
+      }
+    }
 
     final since = lastSyncAt?.toUtc().toIso8601String();
     final baseQuery = _client.from('notes').select();
@@ -35,6 +44,7 @@ class SyncService {
     final remoteNotes = rows
         .whereType<Map<String, dynamic>>()
         .map(_fromRemoteRow)
+        .where((note) => note.isDeleted || !_isEmptyNote(note))
         .toList(growable: false);
     final remoteById = {
       for (final remote in remoteNotes) remote.uuid: remote,
@@ -42,7 +52,7 @@ class SyncService {
 
     final conflictItems = <SyncConflict>[];
     final uploadNotes = <Note>[];
-    for (final local in dirty) {
+    for (final local in effectiveDirty) {
       final remote = remoteById[local.uuid];
       if (remote != null) {
         conflictItems.add(SyncConflict(local: local, remote: remote));
@@ -56,6 +66,22 @@ class SyncService {
     };
 
     var maxServerUpdatedAt = lastSyncAt?.toUtc();
+
+    try {
+      await _deleteRemoteEmptyNotes();
+    } catch (_) {
+      // 空メモの削除に失敗しても同期自体は継続する
+    }
+
+    if (emptyDirty.isNotEmpty) {
+      final missingRemote = <String>[];
+      for (final note in emptyDirty) {
+        if (!remoteById.containsKey(note.uuid)) {
+          missingRemote.add(note.uuid);
+        }
+      }
+      await _noteRepository.markCleanLocal(ids: missingRemote);
+    }
 
     if (remoteNotes.isNotEmpty) {
       for (final remote in remoteNotes) {
@@ -152,6 +178,20 @@ class SyncService {
     if (a == null) return b;
     if (b == null) return a;
     return a.isAfter(b) ? a : b;
+  }
+
+  bool _isEmptyNote(Note note) {
+    return note.title.trim().isEmpty && note.content.trim().isEmpty;
+  }
+
+  Future<void> _deleteRemoteEmptyNotes() async {
+    await _client
+        .from('notes')
+        .delete()
+        .eq('user_id', _userId)
+        .eq('title', '')
+        .eq('content', '')
+        .eq('is_deleted', false);
   }
 
   Future<void> _purgeDeletedBefore(DateTime cutoff) async {
