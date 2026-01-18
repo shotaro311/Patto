@@ -3,6 +3,7 @@ import FlutterMacOS
 
 class MainFlutterWindow: NSWindow, NSWindowDelegate {
   private var quickLaunchMonitor: QuickLaunchMonitor?
+  private var clipboardMonitor: ClipboardMonitor?
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -22,6 +23,10 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     )
     let monitor = QuickLaunchMonitor(channel: channel, window: self)
     quickLaunchMonitor = monitor
+
+    let cbMonitor = ClipboardMonitor(channel: channel)
+    clipboardMonitor = cbMonitor
+    cbMonitor.start()
 
     channel.setMethodCallHandler { call, result in
       switch call.method {
@@ -81,11 +86,11 @@ final class QuickLaunchMonitor {
       }
     }
 
-    localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
+    localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
       self?.handle(event: event, isGlobal: false)
       return event
     }
-    globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
+    globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
       self?.handle(event: event, isGlobal: true)
     }
 
@@ -116,7 +121,7 @@ final class QuickLaunchMonitor {
   }
 
   private func startEventTap() -> Bool {
-    let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+    let mask = CGEventMask((1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue))
     let userInfo = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
     guard
       let tap = CGEvent.tapCreate(
@@ -154,6 +159,10 @@ final class QuickLaunchMonitor {
     switch type {
     case .flagsChanged:
       break
+    case .keyDown:
+      // ショートカット（Cmd+V 等）の途中で発火した場合はダブルタップ判定をリセット
+      resetTap()
+      return
     case .tapDisabledByTimeout, .tapDisabledByUserInput:
       if let eventTap {
         CGEvent.tapEnable(tap: eventTap, enable: true)
@@ -165,7 +174,8 @@ final class QuickLaunchMonitor {
 
     let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
     guard modifierKey.keyCodes.contains(keyCode) else { return }
-    guard modifierKey.isDown(event.flags) else { return }
+    // 修飾キー単体のダブルタップのみを対象にする（Cmd+Shift+V 等のショートカットを誤検知しない）
+    guard modifierKey.isExclusiveDown(event.flags) else { return }
     handleTap()
   }
 
@@ -174,10 +184,21 @@ final class QuickLaunchMonitor {
     if isGlobal && NSApp.isActive && !NSApp.isHidden {
       return
     }
+    if event.type == .keyDown {
+      // ショートカット（Cmd+V 等）の途中で発火した場合はダブルタップ判定をリセット
+      resetTap()
+      return
+    }
     guard modifierKey.keyCodes.contains(event.keyCode) else { return }
-    guard modifierKey.isDown(event.modifierFlags) else { return }
+    // 修飾キー単体のダブルタップのみを対象にする（Cmd+Shift+V 等のショートカットを誤検知しない）
+    guard modifierKey.isExclusiveDown(event.modifierFlags) else { return }
 
     handleTap()
+  }
+
+  private func resetTap() {
+    lastTapAt = 0
+    tapCount = 0
   }
 
   private func handleTap() {
@@ -281,6 +302,21 @@ final class QuickLaunchMonitor {
       }
     }
 
+    func isExclusiveDown(_ flags: NSEvent.ModifierFlags) -> Bool {
+      let relevant: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+      let current = flags.intersection(relevant)
+      switch self {
+      case .command:
+        return current == .command
+      case .control:
+        return current == .control
+      case .option:
+        return current == .option
+      case .shift:
+        return current == .shift
+      }
+    }
+
     func isDown(_ flags: CGEventFlags) -> Bool {
       switch self {
       case .command:
@@ -293,5 +329,90 @@ final class QuickLaunchMonitor {
         return flags.contains(.maskShift)
       }
     }
+
+    func isExclusiveDown(_ flags: CGEventFlags) -> Bool {
+      let relevant: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
+      let current = flags.intersection(relevant)
+      switch self {
+      case .command:
+        return current == .maskCommand
+      case .control:
+        return current == .maskControl
+      case .option:
+        return current == .maskAlternate
+      case .shift:
+        return current == .maskShift
+      }
+    }
+  }
+}
+
+// MARK: - クリップボード監視（外部入力対応）
+
+final class ClipboardMonitor {
+  private let channel: FlutterMethodChannel
+  private var timer: Timer?
+  private var lastChangeCount: Int = 0
+  private var lastNotifiedContent: String?
+  private var lastClipboardContent: String?
+  private var contentBeforeLastChange: String?
+  private var lastChangeAt: TimeInterval = 0
+  private let restoreWindow: TimeInterval = 0.8
+
+  init(channel: FlutterMethodChannel) {
+    self.channel = channel
+  }
+
+  func start() {
+    stop()
+
+    let pasteboard = NSPasteboard.general
+    lastChangeCount = pasteboard.changeCount
+    // 起動時のクリップボード内容を記録して、既存コンテンツの誤通知を防ぐ
+    let initialContent = pasteboard.string(forType: .string)
+    lastNotifiedContent = initialContent
+    lastClipboardContent = initialContent
+    contentBeforeLastChange = nil
+    lastChangeAt = ProcessInfo.processInfo.systemUptime
+
+    timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+      guard let self = self else { return }
+      let currentCount = pasteboard.changeCount
+
+      if currentCount != self.lastChangeCount {
+        self.lastChangeCount = currentCount
+        let now = ProcessInfo.processInfo.systemUptime
+        let content = pasteboard.string(forType: .string)
+        if content == self.lastClipboardContent {
+          self.lastChangeAt = now
+          return
+        }
+        let shouldIgnoreRestore = {
+          guard let content else { return false }
+          guard let beforeLast = self.contentBeforeLastChange else { return false }
+          // 短時間で「直前の変更前の内容」に戻った場合は復元とみなして通知しない
+          return content == beforeLast && (now - self.lastChangeAt) < self.restoreWindow
+        }()
+
+        let previousContent = self.lastClipboardContent
+        self.contentBeforeLastChange = previousContent
+        self.lastClipboardContent = content
+        self.lastChangeAt = now
+
+        // アプリがアクティブな場合のみFlutter側に通知
+        if NSApp.isActive, let content, !shouldIgnoreRestore {
+          // 直前に通知したコンテンツと同じ場合は通知しない
+          if content != self.lastNotifiedContent {
+            self.lastNotifiedContent = content
+            self.channel.invokeMethod("onExternalPaste", arguments: ["content": content])
+          }
+        }
+      }
+    }
+  }
+
+  func stop() {
+    timer?.invalidate()
+    timer = nil
   }
 }

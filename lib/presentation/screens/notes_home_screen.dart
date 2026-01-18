@@ -123,6 +123,7 @@ class _NotesList extends ConsumerWidget {
       ],
     );
     if (action == null) return;
+    if (!context.mounted) return;
     switch (action) {
       case _NoteMenuAction.rename:
         await _renameNote(context, ref, note);

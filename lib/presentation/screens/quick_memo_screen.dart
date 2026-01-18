@@ -7,6 +7,7 @@ import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
 import '../providers/quick_memo_provider.dart';
 import '../widgets/app_input_decoration.dart';
+import 'external_paste_guard.dart';
 
 class QuickMemoScreen extends ConsumerStatefulWidget {
   const QuickMemoScreen({super.key});
@@ -18,12 +19,19 @@ class QuickMemoScreen extends ConsumerStatefulWidget {
 class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   final _focusNode = FocusNode();
   final _controller = TextEditingController();
+  late final ExternalPasteGuard _externalPasteGuard;
   String _lastLoaded = '';
   ProviderSubscription<int>? _quickLaunchSub;
+  ProviderSubscription<int>? _externalPasteSub;
 
   @override
   void initState() {
     super.initState();
+    _externalPasteGuard = ExternalPasteGuard(
+      controller: _controller,
+      focusNode: _focusNode,
+    );
+    _controller.addListener(_onTextChanged);
     _quickLaunchSub = ref.listenManual<int>(
       quickLaunchEventProvider,
       (previous, next) {
@@ -33,14 +41,31 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       });
       },
     );
+    _externalPasteSub = ref.listenManual<int>(
+      externalPasteEventProvider,
+      (previous, next) {
+        final content = ref.read(externalPasteContentProvider);
+        if (content == null || content.isEmpty) return;
+        _externalPasteGuard.queueExternalPaste(
+          content,
+          () => ref.read(quickMemoControllerProvider.notifier).updateContent(_controller.text),
+        );
+      },
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) FocusScope.of(context).requestFocus(_focusNode);
     });
   }
 
+  void _onTextChanged() {
+    _externalPasteGuard.onTextChanged();
+  }
+
   @override
   void dispose() {
     _quickLaunchSub?.close();
+    _externalPasteSub?.close();
+    _externalPasteGuard.dispose();
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();

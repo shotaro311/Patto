@@ -10,6 +10,7 @@ import '../providers/note_repository_provider.dart';
 import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
 import '../widgets/app_input_decoration.dart';
+import 'external_paste_guard.dart';
 
 class NoteEditorPane extends ConsumerStatefulWidget {
   const NoteEditorPane({super.key, required this.noteId});
@@ -25,7 +26,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   final _titleFocusNode = FocusNode();
   late final TextEditingController _controller;
   late final TextEditingController _titleController;
+  late final ExternalPasteGuard _externalPasteGuard;
   ProviderSubscription<int>? _quickLaunchSub;
+  ProviderSubscription<int>? _externalPasteSub;
 
   Timer? _debounce;
   Timer? _titleDebounce;
@@ -55,12 +58,27 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     super.initState();
     _controller = TextEditingController();
     _titleController = TextEditingController();
+    _externalPasteGuard = ExternalPasteGuard(
+      controller: _controller,
+      focusNode: _focusNode,
+    );
+    _controller.addListener(_onTextChanged);
 
     _quickLaunchSub = ref.listenManual<int>(quickLaunchEventProvider, (previous, next) {
       _markFocusPending(delay: const Duration(milliseconds: 80));
     });
 
+    _externalPasteSub = ref.listenManual<int>(externalPasteEventProvider, (previous, next) {
+      final content = ref.read(externalPasteContentProvider);
+      if (content == null || content.isEmpty) return;
+      _externalPasteGuard.queueExternalPaste(content, _scheduleSave);
+    });
+
     _markFocusPending();
+  }
+
+  void _onTextChanged() {
+    _externalPasteGuard.onTextChanged();
   }
 
   @override
@@ -82,7 +100,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   void dispose() {
     _debounce?.cancel();
     _titleDebounce?.cancel();
+    _externalPasteGuard.dispose();
     _quickLaunchSub?.close();
+    _externalPasteSub?.close();
     _controller.dispose();
     _titleController.dispose();
     _titleFocusNode.dispose();

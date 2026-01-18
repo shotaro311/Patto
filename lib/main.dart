@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -9,8 +12,13 @@ import 'core/config/env.dart';
 import 'core/providers.dart';
 import 'data/datasources/local/open_isar.dart';
 
+SemanticsHandle? _semanticsHandle;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isMacOS) {
+    _semanticsHandle ??= WidgetsBinding.instance.ensureSemantics();
+  }
 
   final prefs = await SharedPreferences.getInstance();
   final isar = await openIsar();
@@ -36,4 +44,3 @@ Future<void> main() async {
     ),
   );
 }
-

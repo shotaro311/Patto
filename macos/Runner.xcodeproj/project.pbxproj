@@ -232,16 +232,16 @@
 		33CC10EC2044A3C60003C045 /* Runner */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 33CC10FB2044A3C60003C045 /* Build configuration list for PBXNativeTarget "Runner" */;
-				buildPhases = (
-					2FCE986A097A4DC447087DCA /* [CP] Check Pods Manifest.lock */,
-					33CC10E92044A3C60003C045 /* Sources */,
-					33CC10EA2044A3C60003C045 /* Frameworks */,
-					33CC10EB2044A3C60003C045 /* Resources */,
-					33CC110E2044A8840003C045 /* Bundle Framework */,
-					3399D490228B24CF009A79C7 /* ShellScript */,
-					93637AFF7977A1FD8E7EE77B /* [CP] Embed Pods Frameworks */,
-					8B1E4E8D9C1C4C8A9E3C1D2E /* Generate dSYM for libisar.dylib */,
-				);
+			buildPhases = (
+				2FCE986A097A4DC447087DCA /* [CP] Check Pods Manifest.lock */,
+				33CC10E92044A3C60003C045 /* Sources */,
+				33CC10EA2044A3C60003C045 /* Frameworks */,
+				33CC10EB2044A3C60003C045 /* Resources */,
+				33CC110E2044A8840003C045 /* Bundle Framework */,
+				3399D490228B24CF009A79C7 /* ShellScript */,
+				93637AFF7977A1FD8E7EE77B /* [CP] Embed Pods Frameworks */,
+				8B1E4E8D9C1C4C8A9E3C1D2E /* Generate dSYM for libisar.dylib */,
+			);
 			buildRules = (
 			);
 			dependencies = (
@@ -405,47 +405,43 @@
 			shellPath = /bin/sh;
 			shellScript = "\"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh && touch Flutter/ephemeral/tripwire";
 		};
-			93637AFF7977A1FD8E7EE77B /* [CP] Embed Pods Frameworks */ = {
-				isa = PBXShellScriptBuildPhase;
+		8B1E4E8D9C1C4C8A9E3C1D2E /* Generate dSYM for libisar.dylib */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Generate dSYM for libisar.dylib";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\n\nif [ \"$CONFIGURATION\" != \"Release\" ] && [ \"$CONFIGURATION\" != \"Profile\" ]; then\n  exit 0\nfi\n\nAPP_PATH=\"${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}\"\nISAR_LIB=\"${APP_PATH}/Contents/Frameworks/libisar.dylib\"\n\nif [ ! -f \"$ISAR_LIB\" ]; then\n  exit 0\nfi\n\nmkdir -p \"${DWARF_DSYM_FOLDER_PATH}\"\n\n/usr/bin/dsymutil -o \"${DWARF_DSYM_FOLDER_PATH}/libisar.dylib.dSYM\" \"$ISAR_LIB\"\n";
+			showEnvVarsInLog = 0;
+		};
+		93637AFF7977A1FD8E7EE77B /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks-${CONFIGURATION}-output-files.xcfilelist",
 			);
-			outputPaths = (
-			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-				shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks.sh\"\n";
-				showEnvVarsInLog = 0;
-			};
-			8B1E4E8D9C1C4C8A9E3C1D2E /* Generate dSYM for libisar.dylib */ = {
-				isa = PBXShellScriptBuildPhase;
-				buildActionMask = 2147483647;
-				files = (
-				);
-				inputFileListPaths = (
-				);
-				inputPaths = (
-				);
-				name = "Generate dSYM for libisar.dylib";
-				outputFileListPaths = (
-				);
-				outputPaths = (
-				);
-				runOnlyForDeploymentPostprocessing = 0;
-				shellPath = /bin/sh;
-				shellScript = "set -e\n\nif [ \"$CONFIGURATION\" != \"Release\" ] && [ \"$CONFIGURATION\" != \"Profile\" ]; then\n  exit 0\nfi\n\nAPP_PATH=\"${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}\"\nISAR_LIB=\"${APP_PATH}/Contents/Frameworks/libisar.dylib\"\n\nif [ ! -f \"$ISAR_LIB\" ]; then\n  exit 0\nfi\n\nmkdir -p \"${DWARF_DSYM_FOLDER_PATH}\"\n\n/usr/bin/dsymutil -o \"${DWARF_DSYM_FOLDER_PATH}/libisar.dylib.dSYM\" \"$ISAR_LIB\"\n";
-				showEnvVarsInLog = 0;
-			};
-	/* End PBXShellScriptBuildPhase section */
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		331C80D1294CF70F00263BE5 /* Sources */ = {
