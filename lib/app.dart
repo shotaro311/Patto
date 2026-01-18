@@ -39,6 +39,7 @@ class _PattoAppState extends ConsumerState<PattoApp>
 
     final shortcutService = ref.read(shortcutServiceProvider);
     shortcutService.setOnQuickLaunch(_handleQuickLaunch);
+    shortcutService.setOnExternalPaste(_handleExternalPaste);
 
     final settings = ref.read(appSettingsProvider);
     shortcutService.configureMac(modifierKey: settings.macModifierKey);
@@ -72,10 +73,17 @@ class _PattoAppState extends ConsumerState<PattoApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       ref.read(autoSyncControllerProvider).schedule(delay: Duration.zero);
-      // 外部ツール（クリップボード履歴/音声入力など）からの入力が届く前に
-      // テキストフィールドのfirst responderを取り戻すために、編集画面へフォーカス要求を通知する。
-      ref.read(quickLaunchEventProvider.notifier).state++;
+      if (Platform.isMacOS) {
+        // 外部ツール（クリップボード履歴/音声入力など）からの入力が届く前に
+        // テキストフィールドのfirst responderを取り戻すために、編集画面へフォーカス要求を通知する。
+        ref.read(quickLaunchEventProvider.notifier).state++;
+      }
     }
+  }
+
+  void _handleExternalPaste(String content) {
+    ref.read(externalPasteContentProvider.notifier).state = content;
+    ref.read(externalPasteEventProvider.notifier).state++;
   }
 
   Future<void> _handleQuickLaunch(String? source) async {

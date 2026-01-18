@@ -3,6 +3,7 @@ import FlutterMacOS
 
 class MainFlutterWindow: NSWindow, NSWindowDelegate {
   private var quickLaunchMonitor: QuickLaunchMonitor?
+  private var clipboardMonitor: ClipboardMonitor?
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -22,6 +23,10 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     )
     let monitor = QuickLaunchMonitor(channel: channel, window: self)
     quickLaunchMonitor = monitor
+
+    let cbMonitor = ClipboardMonitor(channel: channel)
+    clipboardMonitor = cbMonitor
+    cbMonitor.start()
 
     channel.setMethodCallHandler { call, result in
       switch call.method {
@@ -339,5 +344,75 @@ final class QuickLaunchMonitor {
         return current == .maskShift
       }
     }
+  }
+}
+
+// MARK: - クリップボード監視（外部入力対応）
+
+final class ClipboardMonitor {
+  private let channel: FlutterMethodChannel
+  private var timer: Timer?
+  private var lastChangeCount: Int = 0
+  private var lastNotifiedContent: String?
+  private var lastClipboardContent: String?
+  private var contentBeforeLastChange: String?
+  private var lastChangeAt: TimeInterval = 0
+  private let restoreWindow: TimeInterval = 0.8
+
+  init(channel: FlutterMethodChannel) {
+    self.channel = channel
+  }
+
+  func start() {
+    stop()
+
+    let pasteboard = NSPasteboard.general
+    lastChangeCount = pasteboard.changeCount
+    // 起動時のクリップボード内容を記録して、既存コンテンツの誤通知を防ぐ
+    let initialContent = pasteboard.string(forType: .string)
+    lastNotifiedContent = initialContent
+    lastClipboardContent = initialContent
+    contentBeforeLastChange = nil
+    lastChangeAt = ProcessInfo.processInfo.systemUptime
+
+    timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+      guard let self = self else { return }
+      let currentCount = pasteboard.changeCount
+
+      if currentCount != self.lastChangeCount {
+        self.lastChangeCount = currentCount
+        let now = ProcessInfo.processInfo.systemUptime
+        let content = pasteboard.string(forType: .string)
+        if content == self.lastClipboardContent {
+          self.lastChangeAt = now
+          return
+        }
+        let shouldIgnoreRestore = {
+          guard let content else { return false }
+          guard let beforeLast = self.contentBeforeLastChange else { return false }
+          // 短時間で「直前の変更前の内容」に戻った場合は復元とみなして通知しない
+          return content == beforeLast && (now - self.lastChangeAt) < self.restoreWindow
+        }()
+
+        let previousContent = self.lastClipboardContent
+        self.contentBeforeLastChange = previousContent
+        self.lastClipboardContent = content
+        self.lastChangeAt = now
+
+        // アプリがアクティブな場合のみFlutter側に通知
+        if NSApp.isActive, let content, !shouldIgnoreRestore {
+          // 直前に通知したコンテンツと同じ場合は通知しない
+          if content != self.lastNotifiedContent {
+            self.lastNotifiedContent = content
+            self.channel.invokeMethod("onExternalPaste", arguments: ["content": content])
+          }
+        }
+      }
+    }
+  }
+
+  func stop() {
+    timer?.invalidate()
+    timer = nil
   }
 }
