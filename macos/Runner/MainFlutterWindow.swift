@@ -81,11 +81,11 @@ final class QuickLaunchMonitor {
       }
     }
 
-    localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
+    localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
       self?.handle(event: event, isGlobal: false)
       return event
     }
-    globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
+    globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
       self?.handle(event: event, isGlobal: true)
     }
 
@@ -116,7 +116,7 @@ final class QuickLaunchMonitor {
   }
 
   private func startEventTap() -> Bool {
-    let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+    let mask = CGEventMask((1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue))
     let userInfo = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
     guard
       let tap = CGEvent.tapCreate(
@@ -154,6 +154,10 @@ final class QuickLaunchMonitor {
     switch type {
     case .flagsChanged:
       break
+    case .keyDown:
+      // ショートカット（Cmd+V 等）の途中で発火した場合はダブルタップ判定をリセット
+      resetTap()
+      return
     case .tapDisabledByTimeout, .tapDisabledByUserInput:
       if let eventTap {
         CGEvent.tapEnable(tap: eventTap, enable: true)
@@ -175,11 +179,21 @@ final class QuickLaunchMonitor {
     if isGlobal && NSApp.isActive && !NSApp.isHidden {
       return
     }
+    if event.type == .keyDown {
+      // ショートカット（Cmd+V 等）の途中で発火した場合はダブルタップ判定をリセット
+      resetTap()
+      return
+    }
     guard modifierKey.keyCodes.contains(event.keyCode) else { return }
     // 修飾キー単体のダブルタップのみを対象にする（Cmd+Shift+V 等のショートカットを誤検知しない）
     guard modifierKey.isExclusiveDown(event.modifierFlags) else { return }
 
     handleTap()
+  }
+
+  private func resetTap() {
+    lastTapAt = 0
+    tapCount = 0
   }
 
   private func handleTap() {
