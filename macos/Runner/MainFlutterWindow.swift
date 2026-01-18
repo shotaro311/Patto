@@ -165,7 +165,8 @@ final class QuickLaunchMonitor {
 
     let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
     guard modifierKey.keyCodes.contains(keyCode) else { return }
-    guard modifierKey.isDown(event.flags) else { return }
+    // 修飾キー単体のダブルタップのみを対象にする（Cmd+Shift+V 等のショートカットを誤検知しない）
+    guard modifierKey.isExclusiveDown(event.flags) else { return }
     handleTap()
   }
 
@@ -175,7 +176,8 @@ final class QuickLaunchMonitor {
       return
     }
     guard modifierKey.keyCodes.contains(event.keyCode) else { return }
-    guard modifierKey.isDown(event.modifierFlags) else { return }
+    // 修飾キー単体のダブルタップのみを対象にする（Cmd+Shift+V 等のショートカットを誤検知しない）
+    guard modifierKey.isExclusiveDown(event.modifierFlags) else { return }
 
     handleTap()
   }
@@ -281,6 +283,21 @@ final class QuickLaunchMonitor {
       }
     }
 
+    func isExclusiveDown(_ flags: NSEvent.ModifierFlags) -> Bool {
+      let relevant: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+      let current = flags.intersection(relevant)
+      switch self {
+      case .command:
+        return current == .command
+      case .control:
+        return current == .control
+      case .option:
+        return current == .option
+      case .shift:
+        return current == .shift
+      }
+    }
+
     func isDown(_ flags: CGEventFlags) -> Bool {
       switch self {
       case .command:
@@ -291,6 +308,21 @@ final class QuickLaunchMonitor {
         return flags.contains(.maskAlternate)
       case .shift:
         return flags.contains(.maskShift)
+      }
+    }
+
+    func isExclusiveDown(_ flags: CGEventFlags) -> Bool {
+      let relevant: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
+      let current = flags.intersection(relevant)
+      switch self {
+      case .command:
+        return current == .maskCommand
+      case .control:
+        return current == .maskControl
+      case .option:
+        return current == .maskAlternate
+      case .shift:
+        return current == .maskShift
       }
     }
   }
