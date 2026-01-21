@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'domain/app_settings.dart';
+import 'domain/quick_launch_event.dart';
 import 'presentation/providers/app_settings_controller.dart';
 import 'presentation/providers/auto_sync_provider.dart';
 import 'presentation/providers/notes_providers.dart';
@@ -27,7 +28,7 @@ class PattoApp extends ConsumerStatefulWidget {
 class _PattoAppState extends ConsumerState<PattoApp>
     with WidgetsBindingObserver {
   final _navigatorKey = GlobalKey<NavigatorState>();
-  ProviderSubscription<MacModifierKey>? _macModifierKeySub;
+  ProviderSubscription<AppSettings>? _macShortcutSub;
   ProviderSubscription<AsyncValue<int>>? _dirtyNotesSub;
   late final NavigatorObserver _quickMemoObserver;
 
@@ -41,11 +42,17 @@ class _PattoAppState extends ConsumerState<PattoApp>
     shortcutService.setOnQuickLaunch(_handleQuickLaunch);
 
     final settings = ref.read(appSettingsProvider);
-    shortcutService.configureMac(modifierKey: settings.macModifierKey);
+    _configureMacShortcuts(settings);
 
-    _macModifierKeySub = ref.listenManual<MacModifierKey>(
-      appSettingsProvider.select((s) => s.macModifierKey),
-      (prev, next) => shortcutService.configureMac(modifierKey: next),
+    _macShortcutSub = ref.listenManual<AppSettings>(
+      appSettingsProvider,
+      (prev, next) {
+        if (prev == null ||
+            prev.macModifierKey != next.macModifierKey ||
+            prev.macShowHideKeyBinding != next.macShowHideKeyBinding) {
+          _configureMacShortcuts(next);
+        }
+      },
     );
 
     final autoSync = ref.read(autoSyncControllerProvider);
@@ -63,7 +70,7 @@ class _PattoAppState extends ConsumerState<PattoApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _macModifierKeySub?.close();
+    _macShortcutSub?.close();
     _dirtyNotesSub?.close();
     super.dispose();
   }
@@ -75,11 +82,22 @@ class _PattoAppState extends ConsumerState<PattoApp>
     }
   }
 
-  Future<void> _handleQuickLaunch(String? source) async {
-    ref.read(quickLaunchSourceProvider.notifier).state = source;
+  void _configureMacShortcuts(AppSettings settings) {
+    final shortcutService = ref.read(shortcutServiceProvider);
+    shortcutService.configureMac(
+      modifierKey: settings.macModifierKey,
+      showHideKeyBinding: settings.macShowHideKeyBinding,
+    );
+  }
+
+  Future<void> _handleQuickLaunch(QuickLaunchEvent event) async {
+    if (event.action == QuickLaunchAction.hide) {
+      return;
+    }
+
     final settings = ref.read(appSettingsProvider);
     if (Platform.isMacOS &&
-        source == 'macos' &&
+        event.source == 'macos' &&
         settings.quickLaunchOpenMode == QuickLaunchOpenMode.lastNote) {
       ref.read(quickLaunchEventProvider.notifier).state++;
       return;
@@ -93,7 +111,9 @@ class _PattoAppState extends ConsumerState<PattoApp>
         }
         ref.read(quickMemoOpenProvider.notifier).state = true;
         final useMorph =
-            source == 'ios_control' && !Platform.isMacOS && Platform.isIOS;
+            event.source == 'ios_control' &&
+                !Platform.isMacOS &&
+                Platform.isIOS;
         _navigatorKey.currentState?.push(_buildQuickMemoRoute(useMorph: useMorph));
         ref.read(quickLaunchEventProvider.notifier).state++;
         return;

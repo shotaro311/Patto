@@ -1,4 +1,5 @@
 import Cocoa
+import ApplicationServices
 import FlutterMacOS
 
 class MainFlutterWindow: NSWindow, NSWindowDelegate {
@@ -27,7 +28,10 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
       switch call.method {
       case "configure":
         let args = call.arguments as? [String: Any]
-        monitor.configure(modifierKeyRaw: args?["modifierKey"] as? String)
+        monitor.configure(
+          modifierKeyRaw: args?["modifierKey"] as? String,
+          showHideKeyBindingRaw: args?["showHideKeyBinding"]
+        )
         result(nil)
       case "start":
         monitor.start()
@@ -53,23 +57,30 @@ final class QuickLaunchMonitor {
   private let channel: FlutterMethodChannel
   private weak var window: NSWindow?
 
-  private var modifierKey: ModifierKey = .command
+  private var showHideModifierKey: ModifierKey = .command
+  private var showHideKeyBinding: KeyBinding?
   private var eventTap: CFMachPort?
   private var runLoopSource: CFRunLoopSource?
   private var globalMonitor: Any?
   private var localMonitor: Any?
 
-  private var lastHandledAt: TimeInterval = 0
-  private var lastTapAt: TimeInterval = 0
-  private var tapCount: Int = 0
+  private var lastTriggerAt: TimeInterval = 0
+  private var lastKeyEventAt: TimeInterval = 0
+  private var lastKeyEventCode: UInt16 = 0
+  private var showHideTapState = TapState()
 
   init(channel: FlutterMethodChannel, window: NSWindow) {
     self.channel = channel
     self.window = window
   }
 
-  func configure(modifierKeyRaw: String?) {
-    modifierKey = ModifierKey(rawValue: modifierKeyRaw ?? "") ?? .command
+  func configure(
+    modifierKeyRaw: String?,
+    showHideKeyBindingRaw: Any?
+  ) {
+    showHideModifierKey = ModifierKey(rawValue: modifierKeyRaw ?? "") ?? .command
+    showHideKeyBinding = KeyBinding.fromMap(showHideKeyBindingRaw)
+    resetTapStates()
   }
 
   func start() {
@@ -81,11 +92,11 @@ final class QuickLaunchMonitor {
       }
     }
 
-    localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
+    localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
       self?.handle(event: event, isGlobal: false)
       return event
     }
-    globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
+    globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
       self?.handle(event: event, isGlobal: true)
     }
 
@@ -110,13 +121,14 @@ final class QuickLaunchMonitor {
     }
     globalMonitor = nil
     localMonitor = nil
-    lastHandledAt = 0
-    lastTapAt = 0
-    tapCount = 0
+    resetTapStates()
   }
 
   private func startEventTap() -> Bool {
-    let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+    let mask = CGEventMask(
+      (1 << CGEventType.flagsChanged.rawValue) |
+      (1 << CGEventType.keyDown.rawValue)
+    )
     let userInfo = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
     guard
       let tap = CGEvent.tapCreate(
@@ -153,7 +165,11 @@ final class QuickLaunchMonitor {
     guard !(NSApp.isActive && !NSApp.isHidden) else { return }
     switch type {
     case .flagsChanged:
-      break
+      handleModifierEventTap(event)
+      return
+    case .keyDown:
+      handleKeyDownEventTap(event)
+      return
     case .tapDisabledByTimeout, .tapDisabledByUserInput:
       if let eventTap {
         CGEvent.tapEnable(tap: eventTap, enable: true)
@@ -162,11 +178,6 @@ final class QuickLaunchMonitor {
     default:
       return
     }
-
-    let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-    guard modifierKey.keyCodes.contains(keyCode) else { return }
-    guard modifierKey.isDown(event.flags) else { return }
-    handleTap()
   }
 
   private func handle(event: NSEvent, isGlobal: Bool) {
@@ -174,80 +185,193 @@ final class QuickLaunchMonitor {
     if isGlobal && NSApp.isActive && !NSApp.isHidden {
       return
     }
-    guard modifierKey.keyCodes.contains(event.keyCode) else { return }
-    guard modifierKey.isDown(event.modifierFlags) else { return }
-
-    handleTap()
+    switch event.type {
+    case .flagsChanged:
+      handleModifierEvent(event)
+    case .keyDown:
+      handleKeyDownEvent(event)
+    default:
+      break
+    }
   }
 
-  private func handleTap() {
+  private func handleModifierEvent(_ event: NSEvent) {
+    handleModifierKeyDown(
+      keyCode: event.keyCode,
+      isDown: { key in key.isDown(event.modifierFlags) }
+    )
+  }
+
+  private func handleModifierEventTap(_ event: CGEvent) {
+    let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+    handleModifierKeyDown(
+      keyCode: keyCode,
+      isDown: { key in key.isDown(event.flags) }
+    )
+  }
+
+  private func handleKeyDownEvent(_ event: NSEvent) {
+    handleKeyBinding(
+      keyCode: event.keyCode,
+      command: event.modifierFlags.contains(.command),
+      control: event.modifierFlags.contains(.control),
+      option: event.modifierFlags.contains(.option),
+      shift: event.modifierFlags.contains(.shift)
+    )
+  }
+
+  private func handleKeyDownEventTap(_ event: CGEvent) {
+    let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+    let flags = event.flags
+    handleKeyBinding(
+      keyCode: keyCode,
+      command: flags.contains(.maskCommand),
+      control: flags.contains(.maskControl),
+      option: flags.contains(.maskAlternate),
+      shift: flags.contains(.maskShift)
+    )
+  }
+
+  private func handleModifierKeyDown(
+    keyCode: UInt16,
+    isDown: (ModifierKey) -> Bool
+  ) {
+    if showHideModifierKey.keyCodes.contains(keyCode),
+       isDown(showHideModifierKey) {
+      if isDuplicateKeyEvent(keyCode) { return }
+      if detectDoubleTap(state: &showHideTapState) {
+        triggerShowHide()
+      }
+    }
+  }
+
+  private func handleKeyBinding(
+    keyCode: UInt16,
+    command: Bool,
+    control: Bool,
+    option: Bool,
+    shift: Bool
+  ) {
+    let matchesShowHide = showHideKeyBinding?.matches(
+      keyCode: keyCode,
+      command: command,
+      control: control,
+      option: option,
+      shift: shift
+    ) ?? false
+    guard matchesShowHide else { return }
+    if isDuplicateKeyEvent(keyCode) { return }
+    triggerShowHide()
+  }
+
+  private func detectDoubleTap(state: inout TapState) -> Bool {
     let now = ProcessInfo.processInfo.systemUptime
-    if now - lastHandledAt <= 0.05 {
-      return
-    }
-    lastHandledAt = now
-    if now - lastTapAt <= 0.35 {
-      tapCount += 1
+    if now - state.lastTapAt <= 0.35 {
+      state.tapCount += 1
     } else {
-      tapCount = 1
+      state.tapCount = 1
     }
-    lastTapAt = now
-
-    guard tapCount >= 2 else { return }
-    tapCount = 0
-    trigger()
+    state.lastTapAt = now
+    if state.tapCount >= 2 {
+      state.tapCount = 0
+      return true
+    }
+    return false
   }
 
-  private func trigger() {
+  private func triggerShowHide() {
+    guard canTriggerNow() else { return }
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
 
-      let window = self.window
-        ?? NSApp.keyWindow
-        ?? NSApp.mainWindow
-        ?? NSApp.windows.first(where: { $0.isVisible })
-        ?? NSApp.windows.first
-
-      // アプリがアクティブで、ウィンドウがキーウィンドウで、表示されていて、ミニマイズされていない場合のみ隠す
-      // これにより、背面にあるウィンドウは前面に持ってこられる
-      let isActiveAndForeground = NSApp.isActive
-        && !NSApp.isHidden
-        && window?.isKeyWindow == true
-        && window?.isVisible == true
-        && window?.isMiniaturized == false
-
-      if isActiveAndForeground {
+      let window = activeWindow()
+      if shouldHide(window: window) {
         NSApp.hide(nil)
+        self.channel.invokeMethod("onQuickLaunch", arguments: [
+          "source": "macos",
+          "action": "hide",
+        ])
         return
       }
 
-      // アプリを通常のアクティベーションポリシーに設定（メニューバーアプリなどでない場合に必要）
-      NSApp.setActivationPolicy(.regular)
-
-      NSApp.unhide(nil)
-      if let window, window.isMiniaturized {
-        window.deminiaturize(nil)
-      }
-
-      // アプリをアクティベート
-      NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-      NSApp.activate(ignoringOtherApps: true)
-
-      // ウィンドウを前面に
-      window?.makeKeyAndOrderFront(nil)
-      window?.orderFrontRegardless()
-
-      // 少し遅延を入れて再度前面に持ってくる（macOSのウィンドウマネージャーとの競合対策）
-      if let window {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-          NSApp.activate(ignoringOtherApps: true)
-          window.makeKeyAndOrderFront(nil)
-          window.orderFrontRegardless()
-        }
-      }
-      self.channel.invokeMethod("onQuickLaunch", arguments: ["source": "macos"])
+      showApp(window: window)
+      self.channel.invokeMethod("onQuickLaunch", arguments: [
+        "source": "macos",
+        "action": "show",
+      ])
     }
   }
+
+  private func canTriggerNow() -> Bool {
+    let now = ProcessInfo.processInfo.systemUptime
+    if now - lastTriggerAt <= 0.05 {
+      return false
+    }
+    lastTriggerAt = now
+    return true
+  }
+
+  private func resetTapStates() {
+    lastTriggerAt = 0
+    lastKeyEventAt = 0
+    lastKeyEventCode = 0
+    showHideTapState = TapState()
+  }
+
+  private func isDuplicateKeyEvent(_ keyCode: UInt16) -> Bool {
+    let now = ProcessInfo.processInfo.systemUptime
+    if keyCode == lastKeyEventCode && now - lastKeyEventAt <= 0.03 {
+      return true
+    }
+    lastKeyEventCode = keyCode
+    lastKeyEventAt = now
+    return false
+  }
+
+  private func activeWindow() -> NSWindow? {
+    return window
+      ?? NSApp.keyWindow
+      ?? NSApp.mainWindow
+      ?? NSApp.windows.first(where: { $0.isVisible })
+      ?? NSApp.windows.first
+  }
+
+  private func shouldHide(window: NSWindow? = nil) -> Bool {
+    let targetWindow = window ?? activeWindow()
+    return NSApp.isActive
+      && !NSApp.isHidden
+      && targetWindow?.isKeyWindow == true
+      && targetWindow?.isVisible == true
+      && targetWindow?.isMiniaturized == false
+  }
+
+  private func showApp(window: NSWindow?) {
+    // アプリを通常のアクティベーションポリシーに設定（メニューバーアプリなどでない場合に必要）
+    NSApp.setActivationPolicy(.regular)
+
+    NSApp.unhide(nil)
+    if let window, window.isMiniaturized {
+      window.deminiaturize(nil)
+    }
+
+    // アプリをアクティベート
+    NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+    NSApp.activate(ignoringOtherApps: true)
+
+    // ウィンドウを前面に
+    window?.makeKeyAndOrderFront(nil)
+    window?.orderFrontRegardless()
+
+    // 少し遅延を入れて再度前面に持ってくる（macOSのウィンドウマネージャーとの競合対策）
+    if let window {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+      }
+    }
+  }
+
 
   private enum ModifierKey: String {
     case command
@@ -292,6 +416,47 @@ final class QuickLaunchMonitor {
       case .shift:
         return flags.contains(.maskShift)
       }
+    }
+  }
+
+  private struct TapState {
+    var lastTapAt: TimeInterval = 0
+    var tapCount: Int = 0
+  }
+
+  private struct KeyBinding {
+    let keyCode: UInt16
+    let command: Bool
+    let control: Bool
+    let option: Bool
+    let shift: Bool
+
+    static func fromMap(_ raw: Any?) -> KeyBinding? {
+      guard let map = raw as? [String: Any],
+            let keyCode = map["keyCode"] as? Int else {
+        return nil
+      }
+      return KeyBinding(
+        keyCode: UInt16(keyCode),
+        command: map["command"] as? Bool == true,
+        control: map["control"] as? Bool == true,
+        option: map["option"] as? Bool == true,
+        shift: map["shift"] as? Bool == true
+      )
+    }
+
+    func matches(
+      keyCode: UInt16,
+      command: Bool,
+      control: Bool,
+      option: Bool,
+      shift: Bool
+    ) -> Bool {
+      return self.keyCode == keyCode
+        && self.command == command
+        && self.control == control
+        && self.option == option
+        && self.shift == shift
     }
   }
 }

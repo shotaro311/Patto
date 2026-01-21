@@ -1,15 +1,19 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/note.dart';
+import '../../domain/app_settings.dart';
 import '../providers/ai_providers.dart';
 import '../providers/app_settings_controller.dart';
 import '../providers/note_repository_provider.dart';
 import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
 import '../widgets/app_input_decoration.dart';
+import '../widgets/animated_dots_text.dart';
+import '../widgets/top_right_toast.dart';
 
 class NoteEditorPane extends ConsumerStatefulWidget {
   const NoteEditorPane({super.key, required this.noteId});
@@ -21,6 +25,8 @@ class NoteEditorPane extends ConsumerStatefulWidget {
 }
 
 class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
+  static final RegExp _symbolPattern =
+      RegExp(r'[\p{P}\p{S}]', unicode: true);
   final _focusNode = FocusNode();
   final _titleFocusNode = FocusNode();
   late final TextEditingController _controller;
@@ -34,6 +40,18 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   String _lastTitleLoaded = '';
   bool _editingTitle = false;
   String? _lastDuplicateTitle;
+  bool _aiBusy = false;
+
+  int _countText(String text, bool excludeSymbols) {
+    if (!excludeSymbols) return text.runes.length;
+    var count = 0;
+    for (final rune in text.runes) {
+      final ch = String.fromCharCode(rune);
+      if (_symbolPattern.hasMatch(ch)) continue;
+      count++;
+    }
+    return count;
+  }
 
   void _requestEditorFocus({Duration delay = Duration.zero}) {
     Future<void>.delayed(delay, () {
@@ -56,7 +74,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     _controller = TextEditingController();
     _titleController = TextEditingController();
 
-    _quickLaunchSub = ref.listenManual<int>(quickLaunchEventProvider, (previous, next) {
+    _quickLaunchSub =
+        ref.listenManual<int>(quickLaunchEventProvider, (previous, next) {
       _markFocusPending(delay: const Duration(milliseconds: 80));
     });
 
@@ -150,63 +169,148 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     if (exitOnSuccess && mounted) setState(() => _editingTitle = false);
   }
 
-  Future<void> _openAiEditDialog(Note note) async {
+  Future<void> _openAiEditDialog({
+    AiPromptPreset? preset,
+    bool fromContextMenu = false,
+  }) async {
     final settings = ref.read(appSettingsProvider);
     if (!settings.aiEnabled) return;
 
     final selection = _controller.selection;
+    final currentText = _controller.text;
     final hasSelection = selection.isValid && !selection.isCollapsed;
-    final selectionStart = hasSelection ? selection.start : null;
-    final selectionEnd = hasSelection ? selection.end : null;
-    final initialText = hasSelection
-        ? _controller.text.substring(selection.start, selection.end)
-        : note.content;
+    final baseOffset = selection.baseOffset >= 0 ? selection.baseOffset : currentText.length;
+    final extentOffset =
+        selection.extentOffset >= 0 ? selection.extentOffset : currentText.length;
+    final start = hasSelection
+        ? (baseOffset < extentOffset ? baseOffset : extentOffset)
+        : baseOffset;
+    final end = hasSelection
+        ? (baseOffset < extentOffset ? extentOffset : baseOffset)
+        : extentOffset;
+    final useFullTextForPreset = preset != null && !hasSelection;
+    final isFullSelection = (hasSelection &&
+            start == 0 &&
+            end == currentText.length &&
+            fromContextMenu) ||
+        useFullTextForPreset;
+    final targetText = useFullTextForPreset
+        ? currentText
+        : (hasSelection ? currentText.substring(start, end) : '');
+    final targetLabel = isFullSelection
+        ? '全文'
+        : (hasSelection ? '選択範囲' : 'カーソル位置');
+    final selectionStart = useFullTextForPreset ? 0 : start;
+    final selectionEnd = useFullTextForPreset ? currentText.length : end;
+    final treatAsSelection = hasSelection || useFullTextForPreset;
+    final target = _AiEditTarget(
+      originalText: targetText,
+      selectionStart: selectionStart,
+      selectionEnd: selectionEnd,
+      cursorOffset: baseOffset,
+      hasSelection: treatAsSelection,
+    );
 
-    final result = await showDialog<_AiEditResult>(
+    final result = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (_) => _AiEditDialog(
-        initialText: initialText,
-        targetLabel: hasSelection ? '選択範囲' : '全文',
+        targetText: target.originalText,
+        targetLabel: targetLabel,
+        previewEnabled: settings.aiPreviewEnabled,
+        sendKey: settings.aiPromptSendKey,
+        initialPrompt: preset?.prompt,
+        autoRun: preset != null,
+        onBusyChanged: (busy) {
+          if (!mounted) return;
+          setState(() => _aiBusy = busy);
+        },
       ),
     );
     if (result == null) return;
+    _applyAiResult(target, result);
+  }
 
-    switch (result.action) {
-      case _AiApplyAction.replace:
-        if (hasSelection && selectionStart != null && selectionEnd != null) {
-          final current = _controller.text;
-          final start = selectionStart < selectionEnd ? selectionStart : selectionEnd;
-          final end = selectionStart < selectionEnd ? selectionEnd : selectionStart;
-          final next = current.replaceRange(start, end, result.text);
-          _controller.value = TextEditingValue(
-            text: next,
-            selection: TextSelection.collapsed(offset: start + result.text.length),
-          );
-        } else {
-          _controller.text = result.text;
-        }
-      case _AiApplyAction.append:
-        final current = _controller.text;
-        if (hasSelection && selectionStart != null && selectionEnd != null) {
-          final end = selectionStart < selectionEnd ? selectionEnd : selectionStart;
-          final insertion = '\n${result.text}';
-          final next = current.replaceRange(end, end, insertion);
-          _controller.value = TextEditingValue(
-            text: next,
-            selection: TextSelection.collapsed(offset: end + insertion.length),
-          );
-        } else {
-          _controller.text = current.isEmpty ? result.text : '$current\n${result.text}';
-        }
-      case _AiApplyAction.cancel:
-        return;
+  void _applyAiResult(_AiEditTarget target, String result) {
+    final current = _controller.text;
+    if (target.hasSelection) {
+      final start = target.selectionStart.clamp(0, current.length);
+      final end = target.selectionEnd.clamp(0, current.length);
+      final next = current.replaceRange(start, end, result);
+      _controller.value = TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(offset: start + result.length),
+      );
+    } else {
+      final insertAt = target.cursorOffset.clamp(0, current.length);
+      final next = current.replaceRange(insertAt, insertAt, result);
+      _controller.value = TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(offset: insertAt + result.length),
+      );
     }
     _scheduleSave();
+  }
+
+  bool _matchesAiShortcut(KeyEvent event, MacKeyBinding? binding) {
+    if (binding == null || event is! KeyDownEvent) return false;
+    final label = event.logicalKey.keyLabel.isNotEmpty
+        ? event.logicalKey.keyLabel
+        : (event.logicalKey.debugName ?? '');
+    if (label.isEmpty) return false;
+    if (label.toUpperCase() != binding.keyLabel.toUpperCase()) {
+      return false;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    if (binding.command != keyboard.isMetaPressed) return false;
+    if (binding.control != keyboard.isControlPressed) return false;
+    if (binding.option != keyboard.isAltPressed) return false;
+    if (binding.shift != keyboard.isShiftPressed) return false;
+    return true;
+  }
+
+  Widget _buildAiContextMenu(
+    BuildContext context,
+    EditableTextState editableTextState,
+    AppSettings settings,
+  ) {
+    final presets = settings.aiPromptPresets.where((preset) => !preset.isEmpty);
+    final items = <ContextMenuButtonItem>[
+      ContextMenuButtonItem(
+        label: 'AI編集…',
+        onPressed: settings.aiEnabled
+            ? () {
+                editableTextState.hideToolbar();
+                  _openAiEditDialog(fromContextMenu: true);
+                }
+            : null,
+      ),
+      for (final preset in presets)
+        ContextMenuButtonItem(
+          label: preset.name,
+          onPressed: settings.aiEnabled
+              ? () {
+                  editableTextState.hideToolbar();
+                  _openAiEditDialog(
+                    preset: preset,
+                    fromContextMenu: true,
+                  );
+                }
+              : null,
+        ),
+      ...editableTextState.contextMenuButtonItems,
+    ];
+
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: editableTextState.contextMenuAnchors,
+      buttonItems: items,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final noteAsync = ref.watch(noteByIdProvider(widget.noteId));
+    final settings = ref.watch(appSettingsProvider);
 
     return noteAsync.when(
       data: (note) {
@@ -277,10 +381,49 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                               ),
                             ),
                     ),
-                    IconButton(
-                      tooltip: 'AI編集',
-                      onPressed: () => _openAiEditDialog(note),
-                      icon: const Icon(Icons.auto_fix_high),
+                    if (settings.aiPromptPresets
+                        .where((preset) => !preset.isEmpty)
+                        .isNotEmpty)
+                      Flexible(
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                for (final preset in settings.aiPromptPresets
+                                    .where((preset) => !preset.isEmpty))
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 4),
+                                    child: Tooltip(
+                                      message: settings.aiEnabled
+                                          ? preset.name
+                                          : 'AI編集は設定で有効化してください',
+                                      child: TextButton(
+                                        onPressed: settings.aiEnabled
+                                            ? () => _openAiEditDialog(
+                                                  preset: preset,
+                                                )
+                                            : null,
+                                        child: Text(preset.name),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    Tooltip(
+                      message: settings.aiEnabled
+                          ? 'AI編集'
+                          : 'AI編集は設定で有効化してください',
+                      child: IconButton(
+                        onPressed: settings.aiEnabled
+                            ? () => _openAiEditDialog()
+                            : null,
+                        icon: const Icon(Icons.auto_fix_high),
+                      ),
                     ),
                     IconButton(
                       tooltip: '削除',
@@ -295,15 +438,93 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: TextField(
-                  controller: _controller,
-                  focusNode: _focusNode,
-                  maxLines: null,
-                  expands: true,
-                  textAlign: TextAlign.left,
-                  textAlignVertical: TextAlignVertical.top,
-                  decoration: appInputDecoration(hintText: 'メモを書く…'),
-                  onChanged: (_) => _scheduleSave(),
+                child: Stack(
+                  children: [
+                    Focus(
+                      onKeyEvent: (node, event) {
+                        if (!settings.aiEnabled) {
+                          return KeyEventResult.ignored;
+                        }
+                        if (_matchesAiShortcut(event, settings.aiEditKeyBinding)) {
+                          _openAiEditDialog();
+                          return KeyEventResult.handled;
+                        }
+                        return KeyEventResult.ignored;
+                      },
+                      child: TextField(
+                        controller: _controller,
+                        focusNode: _focusNode,
+                        maxLines: null,
+                        expands: true,
+                        readOnly: _aiBusy,
+                        enableInteractiveSelection: !_aiBusy,
+                        textAlign: TextAlign.left,
+                        textAlignVertical: TextAlignVertical.top,
+                        decoration: appInputDecoration(hintText: 'メモを書く…'),
+                        onChanged: (_) => _scheduleSave(),
+                        contextMenuBuilder: (context, editableTextState) {
+                          return _buildAiContextMenu(
+                            context,
+                            editableTextState,
+                            settings,
+                          );
+                        },
+                      ),
+                    ),
+                    if (_aiBusy)
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest
+                                .withValues(alpha: 0.9),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            child: AnimatedDotsText(
+                              text: '[AIが編集中',
+                              suffix: ']',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (settings.charCountEnabled)
+                      Positioned(
+                        right: 8,
+                        bottom: 6,
+                        child: ValueListenableBuilder<TextEditingValue>(
+                          valueListenable: _controller,
+                          builder: (context, value, _) {
+                            final count = _countText(
+                              value.text,
+                              settings.charCountExcludeSymbols,
+                            );
+                            final suffix = settings.charCountExcludeSymbols
+                                ? '（記号含まず）'
+                                : '';
+                            return Text(
+                              '$count$suffix',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                            );
+                          },
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),
@@ -316,126 +537,467 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   }
 }
 
-class _AiEditDialog extends ConsumerStatefulWidget {
-  const _AiEditDialog({
-    required this.initialText,
-    required this.targetLabel,
+class _AiEditTarget {
+  const _AiEditTarget({
+    required this.originalText,
+    required this.selectionStart,
+    required this.selectionEnd,
+    required this.cursorOffset,
+    required this.hasSelection,
   });
 
-  final String initialText;
+  final String originalText;
+  final int selectionStart;
+  final int selectionEnd;
+  final int cursorOffset;
+  final bool hasSelection;
+}
+
+class _AiEditDialog extends ConsumerStatefulWidget {
+  const _AiEditDialog({
+    required this.targetText,
+    required this.targetLabel,
+    required this.previewEnabled,
+    required this.sendKey,
+    required this.initialPrompt,
+    required this.autoRun,
+    required this.onBusyChanged,
+  });
+
+  final String targetText;
   final String targetLabel;
+  final bool previewEnabled;
+  final AiPromptSendKey sendKey;
+  final String? initialPrompt;
+  final bool autoRun;
+  final ValueChanged<bool> onBusyChanged;
 
   @override
   ConsumerState<_AiEditDialog> createState() => _AiEditDialogState();
 }
 
 class _AiEditDialogState extends ConsumerState<_AiEditDialog> {
-  final _instructionController = TextEditingController();
-  AsyncValue<String> _result = const AsyncValue.data('');
+  final _promptController = TextEditingController();
+  final _promptFocusNode = FocusNode();
+  String _currentResult = '';
+  bool _hasResult = false;
+  bool _running = false;
+  int _runToken = 0;
+  double _splitRatio = 0.5;
+  _DiffResult? _diffResult;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialPrompt != null) {
+      _promptController.text = widget.initialPrompt!;
+    }
+    if (widget.autoRun && _promptController.text.trim().isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _runPrompt());
+    }
+  }
 
   @override
   void dispose() {
-    _instructionController.dispose();
+    widget.onBusyChanged(false);
+    _promptController.dispose();
+    _promptFocusNode.dispose();
     super.dispose();
   }
 
-  Future<void> _run() async {
-    final instruction = _instructionController.text.trim();
+  Future<void> _runPrompt() async {
+    if (_running) return;
+    final instruction = _promptController.text.trim();
     if (instruction.isEmpty) return;
 
-    setState(() => _result = const AsyncValue.loading());
-    _result = await AsyncValue.guard(() async {
+    final token = ++_runToken;
+    setState(() => _running = true);
+    widget.onBusyChanged(true);
+
+    String result;
+    try {
       final ai = ref.read(aiServiceProvider);
-      return ai.editText(
+      result = await ai.editText(
         instruction: instruction,
-        originalText: widget.initialText,
+        originalText: widget.targetText,
       );
+    } catch (_) {
+      if (!mounted || token != _runToken) return;
+      showTopRightToast(context, 'AI編集に失敗しました。');
+      return;
+    } finally {
+      if (mounted && token == _runToken) {
+        setState(() => _running = false);
+        widget.onBusyChanged(false);
+      }
+    }
+
+    if (!mounted || token != _runToken) return;
+    final trimmed = result.trim();
+    if (trimmed.isEmpty || trimmed == widget.targetText) {
+      showTopRightToast(context, '空もしくは変更がありませんでした。');
+      return;
+    }
+
+    if (!widget.previewEnabled) {
+      Navigator.of(context).pop(trimmed);
+      return;
+    }
+
+    setState(() {
+      _currentResult = trimmed;
+      _hasResult = true;
+      _diffResult = _buildDiff(widget.targetText, trimmed);
     });
-    if (mounted) setState(() {});
+  }
+
+  void _cancel() {
+    _runToken++;
+    widget.onBusyChanged(false);
+    Navigator.of(context).pop();
+  }
+
+  void _apply() {
+    Navigator.of(context).pop(_currentResult);
+  }
+
+  KeyEventResult _handleDialogKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      _cancel();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.enter &&
+        widget.previewEnabled &&
+        _hasResult &&
+        !_running &&
+        !_promptFocusNode.hasFocus) {
+      _apply();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  KeyEventResult _handlePromptKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey != LogicalKeyboardKey.enter) {
+      return KeyEventResult.ignored;
+    }
+
+    final keyboard = HardwareKeyboard.instance;
+    if (widget.sendKey == AiPromptSendKey.ctrlEnter) {
+      if (keyboard.isControlPressed) {
+        _runPrompt();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+
+    if (keyboard.isShiftPressed) {
+      return KeyEventResult.ignored;
+    }
+    _runPrompt();
+    return KeyEventResult.handled;
   }
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('AI文章編集'),
-      content: SizedBox(
-        width: 520,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text('対象: ${widget.targetLabel}'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _instructionController,
-              decoration: appInputDecoration(labelText: '指示（例: もっと丁寧に）'),
-              minLines: 1,
-              maxLines: 3,
-            ),
-            const SizedBox(height: 8),
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text('注意: 対象テキストはAIへ送信されます。'),
-            ),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton(
-                onPressed: _run,
-                child: const Text('実行'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            _result.when(
-              data: (text) => text.isEmpty
-                  ? const SizedBox.shrink()
-                  : SizedBox(
-                      height: 180,
-                      child: SingleChildScrollView(
-                        child: SelectableText(text),
-                      ),
+    final previewArea = widget.previewEnabled
+        ? Expanded(
+            child: Stack(
+              children: [
+                _buildPreviewContent(context),
+                if (_running)
+                  Center(
+                    child: AnimatedDotsText(
+                      text: '[AIが編集中',
+                      suffix: ']',
+                      style: Theme.of(context).textTheme.bodyMedium,
                     ),
-              error: (e, _) => Text('エラー: $e'),
-              loading: () => const Padding(
-                padding: EdgeInsets.all(8),
-                child: CircularProgressIndicator(),
-              ),
+                  ),
+              ],
             ),
-          ],
+          )
+        : SizedBox(
+            height: 120,
+            child: Center(
+              child: _running
+                  ? AnimatedDotsText(
+                      text: '[AIが編集中',
+                      suffix: ']',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    )
+                  : const Text('実行すると本文に反映されます'),
+            ),
+          );
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          const Expanded(child: Text('AI文章編集')),
+          IconButton(
+            tooltip: '閉じる',
+            onPressed: _cancel,
+            icon: const Icon(Icons.close),
+          ),
+        ],
+      ),
+      content: Focus(
+        autofocus: true,
+        onKeyEvent: _handleDialogKeyEvent,
+        child: SizedBox(
+          width: 760,
+          height: widget.previewEnabled ? 560 : 360,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('対象: ${widget.targetLabel}'),
+              const SizedBox(height: 8),
+              const Text('注意: 対象テキストはAIへ送信されます。'),
+              const SizedBox(height: 12),
+              previewArea,
+              const SizedBox(height: 12),
+              Focus(
+                onKeyEvent: _handlePromptKeyEvent,
+                child: TextField(
+                  focusNode: _promptFocusNode,
+                  controller: _promptController,
+                  decoration: appInputDecoration(labelText: '指示を入力'),
+                  minLines: 1,
+                  maxLines: 3,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton(
+                  onPressed: _running ? null : _runPrompt,
+                  child: const Text('送信'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('閉じる'),
+          onPressed: _cancel,
+          child: const Text('キャンセル'),
         ),
-        TextButton(
-          onPressed: _result.valueOrNull == null || _result.valueOrNull!.isEmpty
-              ? null
-              : () => Navigator.of(context).pop(
-                    _AiEditResult(_AiApplyAction.append, _result.valueOrNull!),
-                  ),
-          child: const Text('追記'),
-        ),
-        FilledButton(
-          onPressed: _result.valueOrNull == null || _result.valueOrNull!.isEmpty
-              ? null
-              : () => Navigator.of(context).pop(
-                    _AiEditResult(_AiApplyAction.replace, _result.valueOrNull!),
-                  ),
-          child: const Text('置換して適用'),
-        ),
+        if (widget.previewEnabled)
+          FilledButton(
+            onPressed: _hasResult && !_running ? _apply : null,
+            child: const Text('適用'),
+          ),
       ],
+    );
+  }
+
+  Widget _buildPreviewContent(BuildContext context) {
+    if (!_hasResult) {
+      return const SizedBox.shrink();
+    }
+
+    final diff = _diffResult ?? _buildDiff(widget.targetText, _currentResult);
+    final leftStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        );
+    final rightStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
+          color: const Color(0xFF00C853),
+        );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final totalWidth = constraints.maxWidth;
+        final dividerWidth = 6.0;
+        final leftWidth = (totalWidth * _splitRatio)
+            .clamp(120.0, totalWidth - 120.0)
+            .toDouble();
+        final rightWidth = totalWidth - leftWidth - dividerWidth;
+        return Row(
+          children: [
+            SizedBox(
+              width: leftWidth,
+              child: _buildDiffPane(
+                spans: _buildDiffSpans(
+                  diff.original,
+                  leftStyle,
+                  Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest
+                      .withValues(alpha: 0.6),
+                ),
+              ),
+            ),
+            GestureDetector(
+              onHorizontalDragUpdate: (details) {
+                final next = _splitRatio +
+                    (details.delta.dx / (totalWidth - dividerWidth));
+                setState(() => _splitRatio = next.clamp(0.2, 0.8));
+              },
+              child: Container(
+                width: dividerWidth,
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+            ),
+            SizedBox(
+              width: rightWidth,
+              child: _buildDiffPane(
+                spans: _buildDiffSpans(
+                  diff.modified,
+                  rightStyle,
+                  const Color(0xFF00C853).withValues(alpha: 0.35),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDiffPane({
+    required List<InlineSpan> spans,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: SingleChildScrollView(
+        child: SelectableText.rich(TextSpan(children: spans)),
+      ),
+    );
+  }
+
+  List<InlineSpan> _buildDiffSpans(
+    List<_DiffSegment> segments,
+    TextStyle? baseStyle,
+    Color highlightColor,
+  ) {
+    return [
+      for (final segment in segments)
+        TextSpan(
+          text: segment.text,
+          style: segment.changed
+              ? baseStyle?.copyWith(backgroundColor: highlightColor)
+              : baseStyle,
+        ),
+    ];
+  }
+
+  _DiffResult _buildDiff(String original, String modified) {
+    final originalChars =
+        original.runes.map((r) => String.fromCharCode(r)).toList();
+    final modifiedChars =
+        modified.runes.map((r) => String.fromCharCode(r)).toList();
+    const maxCells = 20000;
+    if (originalChars.length * modifiedChars.length > maxCells) {
+      return _DiffResult(
+        original: [_DiffSegment(original, true)],
+        modified: [_DiffSegment(modified, true)],
+      );
+    }
+
+    final rows = originalChars.length + 1;
+    final cols = modifiedChars.length + 1;
+    final dp = List.generate(rows, (_) => List<int>.filled(cols, 0));
+
+    for (var i = 1; i < rows; i++) {
+      for (var j = 1; j < cols; j++) {
+        if (originalChars[i - 1] == modifiedChars[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1] + 1;
+        } else {
+          dp[i][j] = dp[i - 1][j] >= dp[i][j - 1]
+              ? dp[i - 1][j]
+              : dp[i][j - 1];
+        }
+      }
+    }
+
+    final ops = <_DiffOp>[];
+    var i = originalChars.length;
+    var j = modifiedChars.length;
+    while (i > 0 || j > 0) {
+      if (i > 0 &&
+          j > 0 &&
+          originalChars[i - 1] == modifiedChars[j - 1]) {
+        ops.add(_DiffOp(_DiffOpType.equal, originalChars[i - 1]));
+        i--;
+        j--;
+      } else if (j > 0 &&
+          (i == 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+        ops.add(_DiffOp(_DiffOpType.insert, modifiedChars[j - 1]));
+        j--;
+      } else if (i > 0) {
+        ops.add(_DiffOp(_DiffOpType.delete, originalChars[i - 1]));
+        i--;
+      }
+    }
+    final orderedOps = ops.reversed.toList();
+
+    final originalSegments = <_DiffSegment>[];
+    final modifiedSegments = <_DiffSegment>[];
+
+    void appendSegment(
+      List<_DiffSegment> list,
+      String text,
+      bool changed,
+    ) {
+      if (text.isEmpty) return;
+      if (list.isNotEmpty && list.last.changed == changed) {
+        final last = list.removeLast();
+        list.add(_DiffSegment('${last.text}$text', changed));
+      } else {
+        list.add(_DiffSegment(text, changed));
+      }
+    }
+
+    for (final op in orderedOps) {
+      switch (op.type) {
+      case _DiffOpType.equal:
+        appendSegment(originalSegments, op.text, false);
+        appendSegment(modifiedSegments, op.text, false);
+        break;
+      case _DiffOpType.delete:
+        appendSegment(originalSegments, op.text, true);
+        break;
+      case _DiffOpType.insert:
+        appendSegment(modifiedSegments, op.text, true);
+        break;
+      }
+    }
+
+    return _DiffResult(
+      original: originalSegments,
+      modified: modifiedSegments,
     );
   }
 }
 
-enum _AiApplyAction { replace, append, cancel }
+class _DiffResult {
+  const _DiffResult({
+    required this.original,
+    required this.modified,
+  });
 
-class _AiEditResult {
-  const _AiEditResult(this.action, this.text);
-  final _AiApplyAction action;
+  final List<_DiffSegment> original;
+  final List<_DiffSegment> modified;
+}
+
+class _DiffSegment {
+  const _DiffSegment(this.text, this.changed);
+
+  final String text;
+  final bool changed;
+}
+
+enum _DiffOpType { equal, delete, insert }
+
+class _DiffOp {
+  const _DiffOp(this.type, this.text);
+
+  final _DiffOpType type;
   final String text;
 }

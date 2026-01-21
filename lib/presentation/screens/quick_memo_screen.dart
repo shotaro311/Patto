@@ -16,10 +16,23 @@ class QuickMemoScreen extends ConsumerStatefulWidget {
 }
 
 class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
+  static final RegExp _symbolPattern =
+      RegExp(r'[\p{P}\p{S}]', unicode: true);
   final _focusNode = FocusNode();
   final _controller = TextEditingController();
   String _lastLoaded = '';
   ProviderSubscription<int>? _quickLaunchSub;
+
+  int _countText(String text, bool excludeSymbols) {
+    if (!excludeSymbols) return text.runes.length;
+    var count = 0;
+    for (final rune in text.runes) {
+      final ch = String.fromCharCode(rune);
+      if (_symbolPattern.hasMatch(ch)) continue;
+      count++;
+    }
+    return count;
+  }
 
   @override
   void initState() {
@@ -27,10 +40,10 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     _quickLaunchSub = ref.listenManual<int>(
       quickLaunchEventProvider,
       (previous, next) {
-      if (!mounted) return;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) FocusScope.of(context).requestFocus(_focusNode);
-      });
+        if (!mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) FocusScope.of(context).requestFocus(_focusNode);
+        });
       },
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -66,6 +79,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(quickMemoControllerProvider);
+    final settings = ref.watch(appSettingsProvider);
 
     if (!state.loaded) {
       return const Scaffold(
@@ -96,16 +110,48 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       ),
       body: Padding(
         padding: const EdgeInsets.all(12),
-        child: TextField(
-          controller: _controller,
-          focusNode: _focusNode,
-          maxLines: null,
-          expands: true,
-          textAlign: TextAlign.left,
-          textAlignVertical: TextAlignVertical.top,
-          decoration: appInputDecoration(hintText: 'クイックメモを書く…'),
-          onChanged: (value) =>
-              ref.read(quickMemoControllerProvider.notifier).updateContent(value),
+        child: Stack(
+          children: [
+            TextField(
+              controller: _controller,
+              focusNode: _focusNode,
+              maxLines: null,
+              expands: true,
+              textAlign: TextAlign.left,
+              textAlignVertical: TextAlignVertical.top,
+              decoration: appInputDecoration(hintText: 'クイックメモを書く…'),
+              onChanged: (value) =>
+                  ref.read(quickMemoControllerProvider.notifier).updateContent(value),
+            ),
+            if (settings.charCountEnabled)
+              Positioned(
+                right: 8,
+                bottom: 6,
+                child: ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _controller,
+                  builder: (context, value, _) {
+                    final count = _countText(
+                      value.text,
+                      settings.charCountExcludeSymbols,
+                    );
+                    final suffix = settings.charCountExcludeSymbols
+                        ? '（記号含まず）'
+                        : '';
+                    return Text(
+                      '$count$suffix',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant,
+                          ),
+                    );
+                  },
+                ),
+              ),
+          ],
         ),
       ),
     );

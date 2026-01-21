@@ -122,6 +122,7 @@ class _NotesList extends ConsumerWidget {
         ),
       ],
     );
+    if (!context.mounted) return;
     if (action == null) return;
     switch (action) {
       case _NoteMenuAction.rename:
