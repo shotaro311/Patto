@@ -13,8 +13,22 @@ Future<Isar> openIsar() async {
   if (kDebugMode) {
     try {
       final total = await isar.notes.where().count();
-      final drafts = await isar.notes.filter().isDraftEqualTo(true).count();
-      debugPrint('[Isar] dir=${dir.path} total=$total drafts=$drafts');
+      final draftsActive = await isar.notes
+          .filter()
+          .isDraftEqualTo(true)
+          .and()
+          .isDeletedEqualTo(false)
+          .count();
+      final notesActive = await isar.notes
+          .filter()
+          .isDraftEqualTo(false)
+          .and()
+          .isDeletedEqualTo(false)
+          .count();
+      final deleted = await isar.notes.filter().isDeletedEqualTo(true).count();
+      debugPrint(
+        '[Isar] dir=${dir.path} total=$total notes=$notesActive drafts=$draftsActive deleted=$deleted',
+      );
     } catch (e) {
       debugPrint('[Isar] inspect failed: $e');
     }
