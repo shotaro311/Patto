@@ -18,11 +18,15 @@ class NoteRepository {
   final Uuid _uuid;
   final String _clientId;
 
+  static const defaultMaxDrafts = 50;
+
   Stream<List<Note>> watchNotes({required String query}) {
     final q = query.trim();
     if (q.isEmpty) {
       return _isar.notes
           .filter()
+          .isDraftEqualTo(false)
+          .and()
           .isDeletedEqualTo(false)
           .sortByLocalUpdatedAtDesc()
           .watch(fireImmediately: true);
@@ -30,6 +34,8 @@ class NoteRepository {
 
     return _isar.notes
         .filter()
+        .isDraftEqualTo(false)
+        .and()
         .isDeletedEqualTo(false)
         .and()
         .group(
@@ -53,6 +59,8 @@ class NoteRepository {
   Stream<int> watchDirtyCount() {
     return _isar.notes
         .filter()
+        .isDraftEqualTo(false)
+        .and()
         .isDirtyEqualTo(true)
         .watch(fireImmediately: true)
         .map((items) => items.length);
@@ -66,6 +74,7 @@ class NoteRepository {
     final now = DateTime.now();
     final note = Note()
       ..uuid = _uuid.v4()
+      ..isDraft = false
       ..content = initialContent ?? ''
       ..title = deriveTitleFromContent(initialContent ?? '')
       ..createdAt = now
@@ -80,6 +89,36 @@ class NoteRepository {
     return note;
   }
 
+  Future<Note> createDraft({required String initialContent}) async {
+    final now = DateTime.now();
+    final note = Note()
+      ..uuid = _uuid.v4()
+      ..isDraft = true
+      ..content = initialContent
+      ..title = deriveTitleFromContent(initialContent)
+      ..createdAt = now
+      ..localUpdatedAt = now
+      ..clientId = _clientId
+      ..isDirty = false;
+
+    await _isar.writeTxn(() async {
+      await _isar.notes.put(note);
+    });
+
+    return note;
+  }
+
+  Stream<List<Note>> watchDrafts({int limit = defaultMaxDrafts}) {
+    return _isar.notes
+        .filter()
+        .isDraftEqualTo(true)
+        .and()
+        .isDeletedEqualTo(false)
+        .sortByLocalUpdatedAtDesc()
+        .limit(limit)
+        .watch(fireImmediately: true);
+  }
+
   Future<void> updateContent(String id, String content) async {
     await _isar.writeTxn(() async {
       final note = await _isar.notes.where().uuidEqualTo(id).findFirst();
@@ -89,7 +128,7 @@ class NoteRepository {
         ..content = content
         ..localUpdatedAt = DateTime.now()
         ..syncVersion = note.syncVersion + 1
-        ..isDirty = true;
+        ..isDirty = note.isDraft ? false : true;
       if (previousTitle.trim().isEmpty) {
         note.title = deriveTitleFromContent(content);
       }
@@ -105,8 +144,67 @@ class NoteRepository {
         ..title = title
         ..localUpdatedAt = DateTime.now()
         ..syncVersion = note.syncVersion + 1
-        ..isDirty = true;
+        ..isDirty = note.isDraft ? false : true;
       await _isar.notes.put(note);
+    });
+  }
+
+  Future<Note?> promoteDraftToNote(String id) async {
+    Note? promoted;
+    await _isar.writeTxn(() async {
+      final note = await _isar.notes.where().uuidEqualTo(id).findFirst();
+      if (note == null) return;
+      if (!note.isDraft) {
+        promoted = note;
+        return;
+      }
+
+      note
+        ..isDraft = false
+        ..localUpdatedAt = DateTime.now()
+        ..syncVersion = note.syncVersion + 1
+        ..isDirty = true;
+
+      if (note.title.trim().isEmpty) {
+        note.title = deriveTitleFromContent(note.content);
+      }
+
+      await _isar.notes.put(note);
+      promoted = note;
+    });
+    return promoted;
+  }
+
+  Future<void> autoArchiveDrafts({required int maxDrafts}) async {
+    if (maxDrafts <= 0) return;
+    final drafts = await _isar.notes
+        .filter()
+        .isDraftEqualTo(true)
+        .and()
+        .isDeletedEqualTo(false)
+        .sortByLocalUpdatedAt()
+        .findAll();
+
+    if (drafts.length <= maxDrafts) return;
+
+    final overflow = drafts.take(drafts.length - maxDrafts).toList();
+    await _isar.writeTxn(() async {
+      for (final note in overflow) {
+        final isEmpty = note.title.trim().isEmpty && note.content.trim().isEmpty;
+        if (isEmpty) {
+          await _isar.notes.delete(note.id);
+          continue;
+        }
+        note
+          ..isDraft = false
+          ..localUpdatedAt = DateTime.now()
+          ..syncVersion = note.syncVersion + 1
+          ..isDirty = true;
+        if (note.title.trim().isEmpty) {
+          note.title = deriveTitleFromContent(note.content);
+        }
+        await _isar.notes.put(note);
+      }
     });
   }
 
@@ -118,6 +216,8 @@ class NoteRepository {
     if (trimmed.isEmpty) return false;
     final matches = await _isar.notes
         .filter()
+        .isDraftEqualTo(false)
+        .and()
         .isDeletedEqualTo(false)
         .and()
         .titleEqualTo(trimmed, caseSensitive: false)
@@ -139,11 +239,16 @@ class NoteRepository {
   }
 
   Future<List<Note>> listDirtyNotes() async {
-    return _isar.notes.filter().isDirtyEqualTo(true).findAll();
+    return _isar.notes
+        .filter()
+        .isDraftEqualTo(false)
+        .and()
+        .isDirtyEqualTo(true)
+        .findAll();
   }
 
   Future<void> markAllDirty() async {
-    final all = await _isar.notes.where().findAll();
+    final all = await _isar.notes.filter().isDraftEqualTo(false).findAll();
     if (all.isEmpty) return;
     await _isar.writeTxn(() async {
       for (final note in all) {
@@ -185,7 +290,16 @@ class NoteRepository {
   Future<void> upsertFromRemote(List<Note> remoteNotes) async {
     if (remoteNotes.isEmpty) return;
     await _isar.writeTxn(() async {
-      await _isar.notes.putAll(remoteNotes);
+      for (final remote in remoteNotes) {
+        final local = await _isar.notes.where().uuidEqualTo(remote.uuid).findFirst();
+        if (local != null) {
+          remote
+            ..manualTags = List<String>.from(local.manualTags)
+            ..autoTags = List<String>.from(local.autoTags)
+            ..linksOut = List<String>.from(local.linksOut);
+        }
+        await _isar.notes.put(remote);
+      }
     });
   }
 
