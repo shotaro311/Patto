@@ -149,6 +149,39 @@ class NoteRepository {
     });
   }
 
+  Future<void> setManualTags(String id, List<String> tags) async {
+    await _isar.writeTxn(() async {
+      final note = await _isar.notes.where().uuidEqualTo(id).findFirst();
+      if (note == null) return;
+      note
+        ..manualTags = List<String>.from(tags)
+        ..localUpdatedAt = DateTime.now();
+      await _isar.notes.put(note);
+    });
+  }
+
+  Future<void> setAutoTags(String id, List<String> tags) async {
+    await _isar.writeTxn(() async {
+      final note = await _isar.notes.where().uuidEqualTo(id).findFirst();
+      if (note == null) return;
+      note
+        ..autoTags = List<String>.from(tags)
+        ..localUpdatedAt = DateTime.now();
+      await _isar.notes.put(note);
+    });
+  }
+
+  Future<void> setLinksOut(String id, List<String> linksOut) async {
+    await _isar.writeTxn(() async {
+      final note = await _isar.notes.where().uuidEqualTo(id).findFirst();
+      if (note == null) return;
+      note
+        ..linksOut = List<String>.from(linksOut)
+        ..localUpdatedAt = DateTime.now();
+      await _isar.notes.put(note);
+    });
+  }
+
   Future<Note?> promoteDraftToNote(String id) async {
     Note? promoted;
     await _isar.writeTxn(() async {
