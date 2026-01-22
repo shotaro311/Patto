@@ -44,6 +44,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   String _lastLoaded = '';
   String _lastTitleLoaded = '';
   List<String> _lastSavedLinksOut = const <String>[];
+  List<String> _aiSuggestedTags = const <String>[];
+  bool _aiTagSuggesting = false;
+  int _aiTagSuggestToken = 0;
   bool _editingTitle = false;
   String? _lastDuplicateTitle;
   bool _aiBusy = false;
@@ -96,6 +99,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       _lastLoaded = '';
       _lastTitleLoaded = '';
       _lastSavedLinksOut = const <String>[];
+      _aiSuggestedTags = const <String>[];
+      _aiTagSuggesting = false;
+      _aiTagSuggestToken++;
       _controller.text = '';
       _titleController.text = '';
       _editingTitle = false;
@@ -117,6 +123,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   }
 
   void _scheduleSave() {
+    if (_aiSuggestedTags.isNotEmpty) {
+      setState(() => _aiSuggestedTags = const <String>[]);
+    }
     _debounce?.cancel();
     final linksOut = _extractLinksOut(_controller.text);
     _debounce = Timer(const Duration(milliseconds: 250), () async {
@@ -243,6 +252,34 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       ..sort();
     final repo = ref.read(noteRepositoryProvider);
     await repo.setAutoTags(note.uuid, next);
+  }
+
+  Future<void> _runAiTagSuggest(Note note) async {
+    if (_aiTagSuggesting) return;
+    if (!mounted) return;
+
+    final token = ++_aiTagSuggestToken;
+    setState(() => _aiTagSuggesting = true);
+
+    try {
+      final ai = ref.read(aiServiceProvider);
+      final tags = await ai.suggestTags(
+        text: _controller.text,
+        existingTags: [
+          ...note.manualTags,
+          ...note.autoTags,
+        ],
+      );
+      if (!mounted || token != _aiTagSuggestToken) return;
+      setState(() => _aiSuggestedTags = tags);
+    } catch (_) {
+      if (!mounted || token != _aiTagSuggestToken) return;
+      showTopRightToast(context, 'AI提案に失敗しました。');
+    } finally {
+      if (mounted && token == _aiTagSuggestToken) {
+        setState(() => _aiTagSuggesting = false);
+      }
+    }
   }
 
   Future<void> _delete() async {
@@ -466,10 +503,26 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
           _lastTitleLoaded = note.title;
         }
 
-        final suggestions = _suggestTags(note, _controller.text);
+        final existingTags = <String>{
+          for (final t in note.manualTags) _normalizeTag(t),
+          for (final t in note.autoTags) _normalizeTag(t),
+        };
+        final suggestions = <String>[];
+        for (final t in [
+          ..._suggestTags(note, _controller.text),
+          ..._aiSuggestedTags,
+        ]) {
+          final normalized = _normalizeTag(t);
+          if (normalized.isEmpty) continue;
+          if (existingTags.contains(normalized)) continue;
+          if (suggestions.contains(normalized)) continue;
+          suggestions.add(normalized);
+        }
+
         final hasTagBar = note.manualTags.isNotEmpty ||
             note.autoTags.isNotEmpty ||
-            suggestions.isNotEmpty;
+            suggestions.isNotEmpty ||
+            _aiTagSuggesting;
 
         return Column(
           children: [
@@ -558,6 +611,17 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                         ),
                         Tooltip(
                           message: settings.aiEnabled
+                              ? 'AIでタグ提案'
+                              : 'AI編集は設定で有効化してください',
+                          child: IconButton(
+                            onPressed: settings.aiEnabled && !_aiTagSuggesting
+                                ? () => _runAiTagSuggest(note)
+                                : null,
+                            icon: const Icon(Icons.auto_awesome),
+                          ),
+                        ),
+                        Tooltip(
+                          message: settings.aiEnabled
                               ? 'AI編集'
                               : 'AI編集は設定で有効化してください',
                           child: IconButton(
@@ -580,6 +644,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                         spacing: 6,
                         runSpacing: 6,
                         children: [
+                          if (_aiTagSuggesting)
+                            const Chip(
+                              label: Text('AI提案中…'),
+                            ),
                           for (final tag in note.manualTags)
                             InputChip(
                               label: Text('#${_normalizeTag(tag)}'),
