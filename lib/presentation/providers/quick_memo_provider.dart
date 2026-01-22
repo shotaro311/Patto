@@ -66,7 +66,18 @@ class QuickMemoController extends StateNotifier<QuickMemoState> {
   Future<void> _init() async {
     final repo = _ref.read(noteRepositoryProvider);
     _draftsSub = repo.watchDrafts().listen((drafts) {
-      state = state.copyWith(drafts: drafts, loaded: true);
+      final next = state.copyWith(drafts: drafts, loaded: true);
+      if (next.currentDraftId == null &&
+          next.content.trim().isEmpty &&
+          drafts.isNotEmpty) {
+        final latest = drafts.first;
+        state = next.copyWith(
+          currentDraftId: latest.uuid,
+          content: latest.content,
+        );
+        return;
+      }
+      state = next;
     });
 
     await _migrateLegacyDraftIfNeeded();
@@ -94,6 +105,15 @@ class QuickMemoController extends StateNotifier<QuickMemoState> {
 
   void startNewDraft() {
     _debounce?.cancel();
+    state = state.copyWith(currentDraftId: null, content: '');
+  }
+
+  Future<void> discardCurrentDraft() async {
+    _debounce?.cancel();
+    final id = state.currentDraftId;
+    if (id != null) {
+      await _ref.read(noteRepositoryProvider).deleteDraft(id);
+    }
     state = state.copyWith(currentDraftId: null, content: '');
   }
 

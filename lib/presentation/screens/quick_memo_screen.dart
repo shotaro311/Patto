@@ -9,7 +9,12 @@ import '../providers/quick_memo_provider.dart';
 import '../widgets/app_input_decoration.dart';
 
 class QuickMemoScreen extends ConsumerStatefulWidget {
-  const QuickMemoScreen({super.key});
+  const QuickMemoScreen({
+    super.key,
+    this.showDraftActionSheetOnOpen = false,
+  });
+
+  final bool showDraftActionSheetOnOpen;
 
   @override
   ConsumerState<QuickMemoScreen> createState() => _QuickMemoScreenState();
@@ -22,6 +27,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   final _controller = TextEditingController();
   String _lastLoaded = '';
   ProviderSubscription<int>? _quickLaunchSub;
+  bool _didShowDraftActionSheet = false;
 
   int _countText(String text, bool excludeSymbols) {
     if (!excludeSymbols) return text.runes.length;
@@ -86,6 +92,57 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     );
   }
 
+  Future<void> _showDraftActionSheet() async {
+    final action = await showModalBottomSheet<_DraftAction>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.save),
+                title: const Text('保存'),
+                subtitle: const Text('保存済みメモに追加して、クイックメモを空にする'),
+                onTap: () => Navigator.of(context).pop(_DraftAction.save),
+              ),
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('編集'),
+                subtitle: const Text('このまま編集を続ける'),
+                onTap: () => Navigator.of(context).pop(_DraftAction.edit),
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('破棄'),
+                subtitle: const Text('この下書きを削除して、クイックメモを空にする'),
+                onTap: () => Navigator.of(context).pop(_DraftAction.discard),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted) return;
+    if (action == null) {
+      FocusScope.of(context).requestFocus(_focusNode);
+      return;
+    }
+
+    switch (action) {
+      case _DraftAction.save:
+        await _save();
+      case _DraftAction.edit:
+        FocusScope.of(context).requestFocus(_focusNode);
+      case _DraftAction.discard:
+        await ref.read(quickMemoControllerProvider.notifier).discardCurrentDraft();
+        if (!mounted) return;
+        FocusScope.of(context).requestFocus(_focusNode);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(quickMemoControllerProvider);
@@ -107,6 +164,15 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
 
     final title = deriveTitleFromContent(_controller.text);
     final display = title.isEmpty ? 'クイックメモ' : title;
+
+    if (widget.showDraftActionSheetOnOpen &&
+        !_didShowDraftActionSheet &&
+        state.content.trim().isNotEmpty) {
+      _didShowDraftActionSheet = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showDraftActionSheet();
+      });
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -207,3 +273,5 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     );
   }
 }
+
+enum _DraftAction { save, edit, discard }

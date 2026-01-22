@@ -119,6 +119,15 @@ class NoteRepository {
         .watch(fireImmediately: true);
   }
 
+  Future<void> deleteDraft(String uuid) async {
+    await _isar.writeTxn(() async {
+      final note = await _isar.notes.where().uuidEqualTo(uuid).findFirst();
+      if (note == null) return;
+      if (!note.isDraft) return;
+      await _isar.notes.delete(note.id);
+    });
+  }
+
   Future<void> updateContent(String id, String content) async {
     await _isar.writeTxn(() async {
       final note = await _isar.notes.where().uuidEqualTo(id).findFirst();

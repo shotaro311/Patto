@@ -12,6 +12,7 @@ import 'presentation/providers/notes_providers.dart';
 import 'presentation/providers/quick_launch_provider.dart';
 import 'presentation/providers/quick_memo_provider.dart';
 import 'presentation/providers/shortcut_provider.dart';
+import 'presentation/routes/quick_memo_route_args.dart';
 import 'presentation/screens/note_editor_screen.dart';
 import 'presentation/screens/auth_screen.dart';
 import 'presentation/screens/notes_home_screen.dart';
@@ -104,7 +105,6 @@ class _PattoAppState extends ConsumerState<PattoApp>
     }
     switch (settings.quickLaunchOpenMode) {
       case QuickLaunchOpenMode.newNote:
-        ref.read(quickMemoControllerProvider.notifier).startNewDraft();
         if (ref.read(quickMemoOpenProvider)) {
           ref.read(quickLaunchEventProvider.notifier).state++;
           return;
@@ -114,7 +114,16 @@ class _PattoAppState extends ConsumerState<PattoApp>
             event.source == 'ios_control' &&
                 !Platform.isMacOS &&
                 Platform.isIOS;
-        _navigatorKey.currentState?.push(_buildQuickMemoRoute(useMorph: useMorph));
+        _navigatorKey.currentState?.push(
+          _buildQuickMemoRoute(
+            useMorph: useMorph,
+            showDraftActionSheetOnOpen: false,
+            routeSettings: RouteSettings(
+              name: '/quick-memo',
+              arguments: QuickMemoRouteArgs(useMorph: useMorph),
+            ),
+          ),
+        );
         ref.read(quickLaunchEventProvider.notifier).state++;
         return;
       case QuickLaunchOpenMode.lastNote:
@@ -141,14 +150,22 @@ class _PattoAppState extends ConsumerState<PattoApp>
     }
   }
 
-  Route<void> _buildQuickMemoRoute({bool useMorph = false}) {
+  Route<void> _buildQuickMemoRoute({
+    required bool useMorph,
+    required bool showDraftActionSheetOnOpen,
+    RouteSettings? routeSettings,
+  }) {
+    final settings = routeSettings ??
+        const RouteSettings(name: '/quick-memo', arguments: QuickMemoRouteArgs());
     if (useMorph) {
       return PageRouteBuilder(
-        settings: const RouteSettings(name: '/quick-memo'),
+        settings: settings,
         transitionDuration: const Duration(milliseconds: 360),
         reverseTransitionDuration: const Duration(milliseconds: 220),
         pageBuilder: (context, animation, secondaryAnimation) =>
-            const QuickMemoScreen(),
+            QuickMemoScreen(
+              showDraftActionSheetOnOpen: showDraftActionSheetOnOpen,
+            ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           final curve = CurvedAnimation(
             parent: animation,
@@ -163,11 +180,13 @@ class _PattoAppState extends ConsumerState<PattoApp>
       );
     }
     return PageRouteBuilder(
-      settings: const RouteSettings(name: '/quick-memo'),
+      settings: settings,
       transitionDuration: const Duration(milliseconds: 220),
       reverseTransitionDuration: const Duration(milliseconds: 180),
       pageBuilder: (context, animation, secondaryAnimation) =>
-          const QuickMemoScreen(),
+          QuickMemoScreen(
+            showDraftActionSheetOnOpen: showDraftActionSheetOnOpen,
+          ),
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
         final curve = CurvedAnimation(
           parent: animation,
@@ -203,6 +222,16 @@ class _PattoAppState extends ConsumerState<PattoApp>
       ),
       navigatorKey: _navigatorKey,
       navigatorObservers: [_quickMemoObserver],
+      onGenerateRoute: (settings) {
+        if (settings.name != '/quick-memo') return null;
+        final args = settings.arguments;
+        final casted = args is QuickMemoRouteArgs ? args : const QuickMemoRouteArgs();
+        return _buildQuickMemoRoute(
+          useMorph: casted.useMorph,
+          showDraftActionSheetOnOpen: casted.showDraftActionSheetOnOpen,
+          routeSettings: settings,
+        );
+      },
       routes: {
         '/': (_) => const NotesHomeScreen(),
         '/settings': (_) => const SettingsScreen(),
