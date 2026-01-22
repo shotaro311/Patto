@@ -104,7 +104,7 @@ class _PattoAppState extends ConsumerState<PattoApp>
     }
     switch (settings.quickLaunchOpenMode) {
       case QuickLaunchOpenMode.newNote:
-        ref.read(quickMemoControllerProvider);
+        ref.read(quickMemoControllerProvider.notifier).startNewDraft();
         if (ref.read(quickMemoOpenProvider)) {
           ref.read(quickLaunchEventProvider.notifier).state++;
           return;
