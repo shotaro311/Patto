@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,6 +28,10 @@ class NoteEditorPane extends ConsumerStatefulWidget {
 class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   static final RegExp _symbolPattern =
       RegExp(r'[\p{P}\p{S}]', unicode: true);
+  static final RegExp _hashTagPattern =
+      RegExp(r'(?<!\w)#([\p{L}\p{N}_-]+)', unicode: true);
+  static final RegExp _wikiLinkPattern = RegExp(r'\[\[([^\]]+)\]\]');
+  static final RegExp _urlPattern = RegExp(r'https?://[^\s)>\"]+');
   final _focusNode = FocusNode();
   final _titleFocusNode = FocusNode();
   late final TextEditingController _controller;
@@ -38,6 +43,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   bool _pendingFocus = true;
   String _lastLoaded = '';
   String _lastTitleLoaded = '';
+  List<String> _lastSavedLinksOut = const <String>[];
   bool _editingTitle = false;
   String? _lastDuplicateTitle;
   bool _aiBusy = false;
@@ -89,6 +95,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       _titleDebounce?.cancel();
       _lastLoaded = '';
       _lastTitleLoaded = '';
+      _lastSavedLinksOut = const <String>[];
       _controller.text = '';
       _titleController.text = '';
       _editingTitle = false;
@@ -111,10 +118,131 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
 
   void _scheduleSave() {
     _debounce?.cancel();
+    final linksOut = _extractLinksOut(_controller.text);
     _debounce = Timer(const Duration(milliseconds: 250), () async {
       final repo = ref.read(noteRepositoryProvider);
       await repo.updateContent(widget.noteId, _controller.text);
+      if (!listEquals(_lastSavedLinksOut, linksOut)) {
+        await repo.setLinksOut(widget.noteId, linksOut);
+        _lastSavedLinksOut = linksOut;
+      }
     });
+  }
+
+  List<String> _extractLinksOut(String text) {
+    final result = <String>[];
+    void add(String value) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return;
+      if (result.contains(trimmed)) return;
+      result.add(trimmed);
+    }
+
+    for (final m in _wikiLinkPattern.allMatches(text)) {
+      final v = m.group(1);
+      if (v != null) add(v);
+    }
+    for (final m in _urlPattern.allMatches(text)) {
+      final v = m.group(0);
+      if (v != null) add(v);
+    }
+    return result;
+  }
+
+  List<String> _suggestTags(Note note, String text) {
+    final existing = <String>{
+      for (final t in note.manualTags) _normalizeTag(t),
+      for (final t in note.autoTags) _normalizeTag(t),
+    };
+
+    final result = <String>[];
+    for (final m in _hashTagPattern.allMatches(text)) {
+      final raw = m.group(1);
+      if (raw == null) continue;
+      final normalized = _normalizeTag(raw);
+      if (normalized.isEmpty) continue;
+      if (existing.contains(normalized)) continue;
+      if (result.contains(normalized)) continue;
+      result.add(normalized);
+      if (result.length >= 10) break;
+    }
+    return result;
+  }
+
+  String _normalizeTag(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed.toLowerCase();
+  }
+
+  Future<void> _addManualTag(Note note) async {
+    final controller = TextEditingController();
+    try {
+      final tag = await showDialog<String>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('タグを追加'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: appInputDecoration(hintText: '例: todo'),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => Navigator.of(context).pop(controller.text),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('キャンセル'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(controller.text),
+                child: const Text('追加'),
+              ),
+            ],
+          );
+        },
+      );
+      final normalized = _normalizeTag(tag ?? '');
+      if (normalized.isEmpty) return;
+      final next = <String>{
+        for (final t in note.manualTags) _normalizeTag(t),
+        normalized,
+      }.toList()
+        ..sort();
+      final repo = ref.read(noteRepositoryProvider);
+      await repo.setManualTags(note.uuid, next);
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _removeManualTag(Note note, String tag) async {
+    final target = _normalizeTag(tag);
+    final next = note.manualTags.map(_normalizeTag).where((t) => t != target).toList()
+      ..sort();
+    final repo = ref.read(noteRepositoryProvider);
+    await repo.setManualTags(note.uuid, next);
+  }
+
+  Future<void> _applyAutoTag(Note note, String tag) async {
+    final normalized = _normalizeTag(tag);
+    if (normalized.isEmpty) return;
+    final next = <String>{
+      for (final t in note.autoTags) _normalizeTag(t),
+      normalized,
+    }.toList()
+      ..sort();
+    final repo = ref.read(noteRepositoryProvider);
+    await repo.setAutoTags(note.uuid, next);
+  }
+
+  Future<void> _removeAutoTag(Note note, String tag) async {
+    final target = _normalizeTag(tag);
+    final next = note.autoTags.map(_normalizeTag).where((t) => t != target).toList()
+      ..sort();
+    final repo = ref.read(noteRepositoryProvider);
+    await repo.setAutoTags(note.uuid, next);
   }
 
   Future<void> _delete() async {
@@ -338,98 +466,141 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
           _lastTitleLoaded = note.title;
         }
 
+        final suggestions = _suggestTags(note, _controller.text);
+        final hasTagBar = note.manualTags.isNotEmpty ||
+            note.autoTags.isNotEmpty ||
+            suggestions.isNotEmpty;
+
         return Column(
           children: [
             Material(
               color: Theme.of(context).colorScheme.surface,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: _editingTitle
-                          ? TextField(
-                              controller: _titleController,
-                              focusNode: _titleFocusNode,
-                              decoration: appInputDecoration(
-                                hintText: 'タイトルを入力',
-                                isDense: true,
-                              ),
-                              onChanged: (_) => _scheduleTitleSave(note),
-                              textInputAction: TextInputAction.done,
-                              onEditingComplete: () => _commitTitle(note),
-                              onSubmitted: (_) => _commitTitle(note),
-                            )
-                          : GestureDetector(
-                              onTap: () {
-                                setState(() => _editingTitle = true);
-                                WidgetsBinding.instance.addPostFrameCallback((_) {
-                                  if (!mounted) return;
-                                  _titleController.selection = TextSelection(
-                                    baseOffset: 0,
-                                    extentOffset: _titleController.text.length,
-                                  );
-                                  FocusScope.of(context)
-                                      .requestFocus(_titleFocusNode);
-                                });
-                              },
-                              child: Text(
-                                display,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                            ),
-                    ),
-                    if (settings.aiPromptPresets
-                        .where((preset) => !preset.isEmpty)
-                        .isNotEmpty)
-                      Flexible(
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
-                              children: [
-                                for (final preset in settings.aiPromptPresets
-                                    .where((preset) => !preset.isEmpty))
-                                  Padding(
-                                    padding: const EdgeInsets.only(right: 4),
-                                    child: Tooltip(
-                                      message: settings.aiEnabled
-                                          ? preset.name
-                                          : 'AI編集は設定で有効化してください',
-                                      child: TextButton(
-                                        onPressed: settings.aiEnabled
-                                            ? () => _openAiEditDialog(
-                                                  preset: preset,
-                                                )
-                                            : null,
-                                        child: Text(preset.name),
-                                      ),
-                                    ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _editingTitle
+                              ? TextField(
+                                  controller: _titleController,
+                                  focusNode: _titleFocusNode,
+                                  decoration: appInputDecoration(
+                                    hintText: 'タイトルを入力',
+                                    isDense: true,
                                   ),
-                              ],
+                                  onChanged: (_) => _scheduleTitleSave(note),
+                                  textInputAction: TextInputAction.done,
+                                  onEditingComplete: () => _commitTitle(note),
+                                  onSubmitted: (_) => _commitTitle(note),
+                                )
+                              : GestureDetector(
+                                  onTap: () {
+                                    setState(() => _editingTitle = true);
+                                    WidgetsBinding.instance
+                                        .addPostFrameCallback((_) {
+                                      if (!mounted) return;
+                                      _titleController.selection = TextSelection(
+                                        baseOffset: 0,
+                                        extentOffset: _titleController.text.length,
+                                      );
+                                      FocusScope.of(context)
+                                          .requestFocus(_titleFocusNode);
+                                    });
+                                  },
+                                  child: Text(
+                                    display,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                ),
+                        ),
+                        if (settings.aiPromptPresets
+                            .where((preset) => !preset.isEmpty)
+                            .isNotEmpty)
+                          Flexible(
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: [
+                                    for (final preset in settings.aiPromptPresets
+                                        .where((preset) => !preset.isEmpty))
+                                      Padding(
+                                        padding: const EdgeInsets.only(right: 4),
+                                        child: Tooltip(
+                                          message: settings.aiEnabled
+                                              ? preset.name
+                                              : 'AI編集は設定で有効化してください',
+                                          child: TextButton(
+                                            onPressed: settings.aiEnabled
+                                                ? () => _openAiEditDialog(
+                                                      preset: preset,
+                                                    )
+                                                : null,
+                                            child: Text(preset.name),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
+                        IconButton(
+                          tooltip: 'タグを追加',
+                          onPressed: () => _addManualTag(note),
+                          icon: const Icon(Icons.label_outline),
                         ),
-                      ),
-                    Tooltip(
-                      message: settings.aiEnabled
-                          ? 'AI編集'
-                          : 'AI編集は設定で有効化してください',
-                      child: IconButton(
-                        onPressed: settings.aiEnabled
-                            ? () => _openAiEditDialog()
-                            : null,
-                        icon: const Icon(Icons.auto_fix_high),
-                      ),
+                        Tooltip(
+                          message: settings.aiEnabled
+                              ? 'AI編集'
+                              : 'AI編集は設定で有効化してください',
+                          child: IconButton(
+                            onPressed: settings.aiEnabled
+                                ? () => _openAiEditDialog()
+                                : null,
+                            icon: const Icon(Icons.auto_fix_high),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: '削除',
+                          onPressed: _delete,
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      ],
                     ),
-                    IconButton(
-                      tooltip: '削除',
-                      onPressed: _delete,
-                      icon: const Icon(Icons.delete_outline),
-                    ),
+                    if (hasTagBar) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final tag in note.manualTags)
+                            InputChip(
+                              label: Text('#${_normalizeTag(tag)}'),
+                              onDeleted: () => _removeManualTag(note, tag),
+                            ),
+                          for (final tag in note.autoTags)
+                            InputChip(
+                              label: Text('#${_normalizeTag(tag)}'),
+                              backgroundColor: Theme.of(context)
+                                  .colorScheme
+                                  .secondaryContainer,
+                              onDeleted: () => _removeAutoTag(note, tag),
+                            ),
+                          for (final tag in suggestions)
+                            ActionChip(
+                              label: Text('提案: #$tag'),
+                              onPressed: () => _applyAutoTag(note, tag),
+                            ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
