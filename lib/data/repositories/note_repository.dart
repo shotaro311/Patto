@@ -18,7 +18,7 @@ class NoteRepository {
   final Uuid _uuid;
   final String _clientId;
 
-  static const defaultMaxDrafts = 50;
+  static const defaultMaxDrafts = 5;
 
   Stream<List<Note>> watchNotes({required String query}) {
     final q = query.trim();
