@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/note.dart';
 import '../providers/app_settings_controller.dart';
-import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
 import '../providers/quick_memo_provider.dart';
 import '../widgets/app_input_decoration.dart';
@@ -69,11 +68,11 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       return;
     }
 
-    ref.read(selectedNoteIdProvider.notifier).state = note.uuid;
     await ref.read(appSettingsProvider.notifier).setLastOpenedNoteId(note.uuid);
 
     if (!mounted) return;
-    Navigator.of(context).popUntil((route) => route.isFirst);
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('保存しました')));
   }
 
   @override
@@ -102,6 +101,46 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       appBar: AppBar(
         title: Text(display),
         actions: [
+          PopupMenuButton<String>(
+            tooltip: '下書き',
+            onSelected: (value) async {
+              if (value == '__new') {
+                ref.read(quickMemoControllerProvider.notifier).startNewDraft();
+              } else {
+                await ref
+                    .read(quickMemoControllerProvider.notifier)
+                    .openDraft(value);
+              }
+              if (!mounted) return;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) FocusScope.of(context).requestFocus(_focusNode);
+              });
+            },
+            itemBuilder: (context) {
+              final items = <PopupMenuEntry<String>>[
+                const PopupMenuItem(
+                  value: '__new',
+                  child: Text('新規下書き'),
+                ),
+              ];
+              if (state.drafts.isEmpty) return items;
+              items.add(const PopupMenuDivider());
+              for (final draft in state.drafts) {
+                final label = draft.title.trim().isEmpty ? '（無題）' : draft.title.trim();
+                items.add(
+                  PopupMenuItem(
+                    value: draft.uuid,
+                    child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                );
+              }
+              return items;
+            },
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Icon(Icons.history),
+            ),
+          ),
           TextButton(
             onPressed: _save,
             child: const Text('保存'),

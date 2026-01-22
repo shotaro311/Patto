@@ -4,13 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
 import '../../data/models/note.dart';
-import '../../data/repositories/quick_memo_repository.dart';
+import '../../data/repositories/note_repository.dart';
 import 'note_repository_provider.dart';
-
-final quickMemoRepositoryProvider = Provider<QuickMemoRepository>((ref) {
-  final prefs = ref.watch(sharedPreferencesProvider);
-  return QuickMemoRepository(prefs);
-});
 
 final quickMemoControllerProvider =
     StateNotifierProvider<QuickMemoController, QuickMemoState>((ref) {
@@ -20,67 +15,128 @@ final quickMemoControllerProvider =
 final quickMemoOpenProvider = StateProvider<bool>((ref) => false);
 
 class QuickMemoState {
+  static const _unset = Object();
+
   const QuickMemoState({
     required this.content,
+    required this.currentDraftId,
+    required this.drafts,
     required this.loaded,
   });
 
   final String content;
+  final String? currentDraftId;
+  final List<Note> drafts;
   final bool loaded;
 
   QuickMemoState copyWith({
     String? content,
+    Object? currentDraftId = _unset,
+    List<Note>? drafts,
     bool? loaded,
   }) {
     return QuickMemoState(
       content: content ?? this.content,
+      currentDraftId:
+          identical(currentDraftId, _unset) ? this.currentDraftId : currentDraftId as String?,
+      drafts: drafts ?? this.drafts,
       loaded: loaded ?? this.loaded,
     );
   }
 
-  static const initial = QuickMemoState(content: '', loaded: false);
+  static const initial = QuickMemoState(
+    content: '',
+    currentDraftId: null,
+    drafts: [],
+    loaded: false,
+  );
 }
 
 class QuickMemoController extends StateNotifier<QuickMemoState> {
   QuickMemoController(this._ref) : super(QuickMemoState.initial) {
-    _load();
+    _init();
   }
 
   final Ref _ref;
   Timer? _debounce;
+  StreamSubscription<List<Note>>? _draftsSub;
 
-  void _load() {
-    final repo = _ref.read(quickMemoRepositoryProvider);
-    state = state.copyWith(content: repo.loadDraft(), loaded: true);
+  static const _legacyDraftKey = 'quickMemoDraft';
+
+  Future<void> _init() async {
+    final repo = _ref.read(noteRepositoryProvider);
+    _draftsSub = repo.watchDrafts().listen((drafts) {
+      state = state.copyWith(drafts: drafts, loaded: true);
+    });
+
+    await _migrateLegacyDraftIfNeeded();
+    if (!state.loaded) {
+      state = state.copyWith(loaded: true);
+    }
+  }
+
+  Future<void> _migrateLegacyDraftIfNeeded() async {
+    final prefs = _ref.read(sharedPreferencesProvider);
+    final legacy = prefs.getString(_legacyDraftKey);
+    if (legacy == null || legacy.trim().isEmpty) return;
+
+    await prefs.remove(_legacyDraftKey);
+
+    final repo = _ref.read(noteRepositoryProvider);
+    final draft = await repo.createDraft(initialContent: legacy);
+    await repo.autoArchiveDrafts(maxDrafts: NoteRepository.defaultMaxDrafts);
+
+    state = state.copyWith(
+      currentDraftId: draft.uuid,
+      content: legacy,
+    );
+  }
+
+  void startNewDraft() {
+    _debounce?.cancel();
+    state = state.copyWith(currentDraftId: null, content: '');
+  }
+
+  Future<void> openDraft(String id) async {
+    _debounce?.cancel();
+    final repo = _ref.read(noteRepositoryProvider);
+    final note = await repo.getNote(id);
+    if (note == null || !note.isDraft || note.isDeleted) return;
+    state = state.copyWith(currentDraftId: note.uuid, content: note.content);
   }
 
   void updateContent(String value) {
     state = state.copyWith(content: value);
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () async {
-      final repo = _ref.read(quickMemoRepositoryProvider);
-      await repo.saveDraft(value);
+      final noteRepo = _ref.read(noteRepositoryProvider);
+      final id = state.currentDraftId;
+      if (id == null) {
+        if (value.trim().isEmpty) return;
+        final created = await noteRepo.createDraft(initialContent: value);
+        await noteRepo.autoArchiveDrafts(maxDrafts: NoteRepository.defaultMaxDrafts);
+        state = state.copyWith(currentDraftId: created.uuid);
+        return;
+      }
+      await noteRepo.updateContent(id, value);
     });
   }
 
   Future<Note?> saveAsNote() async {
-    final content = state.content.trim();
-    if (content.isEmpty) return null;
+    final id = state.currentDraftId;
+    if (id == null) return null;
+    if (state.content.trim().isEmpty) return null;
 
     final repo = _ref.read(noteRepositoryProvider);
-    final note = await repo.createNote(initialContent: state.content);
-
-    final memoRepo = _ref.read(quickMemoRepositoryProvider);
-    await memoRepo.clearDraft();
-    state = state.copyWith(content: '');
+    final note = await repo.promoteDraftToNote(id);
+    startNewDraft();
     return note;
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
-    final repo = _ref.read(quickMemoRepositoryProvider);
-    repo.saveDraft(state.content);
+    _draftsSub?.cancel();
     super.dispose();
   }
 }
