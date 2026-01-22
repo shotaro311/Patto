@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/note.dart';
 import '../providers/app_settings_controller.dart';
+import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
 import '../providers/quick_memo_provider.dart';
 import '../widgets/app_input_decoration.dart';
@@ -68,11 +69,21 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       return;
     }
 
+    ref.read(selectedNoteIdProvider.notifier).state = note.uuid;
     await ref.read(appSettingsProvider.notifier).setLastOpenedNoteId(note.uuid);
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('保存しました')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('保存しました'),
+        action: SnackBarAction(
+          label: '開く',
+          onPressed: () {
+            Navigator.of(context).popUntil((route) => route.isFirst);
+          },
+        ),
+      ),
+    );
   }
 
   @override

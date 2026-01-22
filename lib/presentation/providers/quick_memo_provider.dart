@@ -124,10 +124,15 @@ class QuickMemoController extends StateNotifier<QuickMemoState> {
 
   Future<Note?> saveAsNote() async {
     final id = state.currentDraftId;
-    if (id == null) return null;
     if (state.content.trim().isEmpty) return null;
 
     final repo = _ref.read(noteRepositoryProvider);
+    if (id == null) {
+      final note = await repo.createNote(initialContent: state.content);
+      startNewDraft();
+      return note;
+    }
+
     final note = await repo.promoteDraftToNote(id);
     startNewDraft();
     return note;
