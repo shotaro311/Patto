@@ -9,6 +9,10 @@
   - `cd <worktree_path>`
   - `ls` で `task.md` があることを確認
 
+### 今回の worktree
+- pdev-1: `/Users/shotaro/code/shared/Patto-pdev-1`
+- pdev-2: `/Users/shotaro/code/shared/Patto-pdev-2`
+
 ## 3) worker 起動（推奨: Codex CLI を別プロセスで起動）
 
 別ターミナル（またはバックグラウンド）で、worktree ごとに `codex exec` を起動する。
