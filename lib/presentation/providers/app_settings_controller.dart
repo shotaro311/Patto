@@ -109,6 +109,9 @@ class AppSettingsController extends StateNotifier<AppSettings> {
         prompt: '入力された文章の内容や、癖、テイストは変えずに、誤字や脱字などの致命的なミスのみ修正してください。',
       ),
       AiPromptPreset(name: '', prompt: ''),
+      AiPromptPreset(name: '', prompt: ''),
+      AiPromptPreset(name: '', prompt: ''),
+      AiPromptPreset(name: '', prompt: ''),
     ];
   }
 
@@ -122,11 +125,11 @@ class AppSettingsController extends StateNotifier<AppSettings> {
           .whereType<AiPromptPreset>()
           .toList();
       if (presets.isEmpty) return _defaultAiPresets();
-      while (presets.length < 3) {
+      while (presets.length < 6) {
         presets.add(const AiPromptPreset(name: '', prompt: ''));
       }
-      if (presets.length > 3) {
-        return presets.take(3).toList();
+      if (presets.length > 6) {
+        return presets.take(6).toList();
       }
       return presets;
     } catch (_) {
@@ -189,11 +192,11 @@ class AppSettingsController extends StateNotifier<AppSettings> {
         .map((p) => AiPromptPreset(name: p.name, prompt: p.prompt))
         .toList();
     final normalized = List<AiPromptPreset>.from(trimmed);
-    while (normalized.length < 3) {
+    while (normalized.length < 6) {
       normalized.add(const AiPromptPreset(name: '', prompt: ''));
     }
-    if (normalized.length > 3) {
-      normalized.removeRange(3, normalized.length);
+    if (normalized.length > 6) {
+      normalized.removeRange(6, normalized.length);
     }
     final payload = jsonEncode(normalized.map((p) => p.toMap()).toList());
     await _prefs.setString(_kAiPromptPresets, payload);

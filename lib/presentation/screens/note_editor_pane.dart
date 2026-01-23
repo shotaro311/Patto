@@ -14,6 +14,7 @@ import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
 import '../widgets/app_input_decoration.dart';
 import '../widgets/animated_dots_text.dart';
+import '../widgets/ai_prompt_presets_hover_menu.dart';
 import '../widgets/top_right_toast.dart';
 
 class NoteEditorPane extends ConsumerStatefulWidget {
@@ -571,39 +572,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                   ),
                                 ),
                         ),
-                        if (settings.aiPromptPresets
-                            .where((preset) => !preset.isEmpty)
-                            .isNotEmpty)
-                          Flexible(
-                            child: Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: Row(
-                                  children: [
-                                    for (final preset in settings.aiPromptPresets
-                                        .where((preset) => !preset.isEmpty))
-                                      Padding(
-                                        padding: const EdgeInsets.only(right: 4),
-                                        child: Tooltip(
-                                          message: settings.aiEnabled
-                                              ? preset.name
-                                              : 'AI編集は設定で有効化してください',
-                                          child: TextButton(
-                                            onPressed: settings.aiEnabled
-                                                ? () => _openAiEditDialog(
-                                                      preset: preset,
-                                                    )
-                                                : null,
-                                            child: Text(preset.name),
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
+                        AiPromptPresetsHoverMenu(
+                          presets: settings.aiPromptPresets,
+                          enabled: settings.aiEnabled,
+                          onSelect: (preset) => _openAiEditDialog(preset: preset),
+                        ),
                         IconButton(
                           tooltip: 'タグを追加',
                           onPressed: () => _addManualTag(note),

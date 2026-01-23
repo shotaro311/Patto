@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/note.dart';
+import '../../domain/app_settings.dart';
 import '../providers/ai_providers.dart';
 import '../providers/app_settings_controller.dart';
 import '../providers/note_repository_provider.dart';
@@ -9,6 +10,7 @@ import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
 import '../providers/quick_memo_provider.dart';
 import '../widgets/app_input_decoration.dart';
+import '../widgets/ai_prompt_presets_hover_menu.dart';
 import 'note_editor_pane.dart';
 
 class QuickMemoScreen extends ConsumerStatefulWidget {
@@ -216,7 +218,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     }
   }
 
-  Future<void> _openAiEditDialog() async {
+  Future<void> _openAiEditDialog({AiPromptPreset? preset}) async {
     final settings = ref.read(appSettingsProvider);
     if (!settings.aiEnabled) return;
 
@@ -232,17 +234,23 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     final end = hasSelection
         ? (baseOffset < extentOffset ? extentOffset : baseOffset)
         : extentOffset;
-    final isFullSelection =
-        hasSelection && start == 0 && end == currentText.length;
-    final targetText = hasSelection ? currentText.substring(start, end) : '';
+    final useFullTextForPreset = preset != null && !hasSelection;
+    final isFullSelection = (hasSelection && start == 0 && end == currentText.length) ||
+        useFullTextForPreset;
+    final targetText = useFullTextForPreset
+        ? currentText
+        : (hasSelection ? currentText.substring(start, end) : '');
     final targetLabel =
         isFullSelection ? '全文' : (hasSelection ? '選択範囲' : 'カーソル位置');
+    final selectionStart = useFullTextForPreset ? 0 : start;
+    final selectionEnd = useFullTextForPreset ? currentText.length : end;
+    final treatAsSelection = hasSelection || useFullTextForPreset;
     final target = AiEditTarget(
       originalText: targetText,
-      selectionStart: start,
-      selectionEnd: end,
+      selectionStart: selectionStart,
+      selectionEnd: selectionEnd,
       cursorOffset: baseOffset,
-      hasSelection: hasSelection,
+      hasSelection: treatAsSelection,
     );
 
     final result = await showDialog<String>(
@@ -253,8 +261,8 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
         targetLabel: targetLabel,
         previewEnabled: settings.aiPreviewEnabled,
         sendKey: settings.aiPromptSendKey,
-        initialPrompt: null,
-        autoRun: false,
+        initialPrompt: preset?.prompt,
+        autoRun: preset != null,
         onBusyChanged: (busy) {
           if (!mounted) return;
           setState(() => _aiBusy = busy);
@@ -400,10 +408,15 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
               icon: const Icon(Icons.auto_awesome),
             ),
           ),
+          AiPromptPresetsHoverMenu(
+            presets: settings.aiPromptPresets,
+            enabled: settings.aiEnabled,
+            onSelect: (preset) => _openAiEditDialog(preset: preset),
+          ),
           Tooltip(
             message: settings.aiEnabled ? 'AI編集' : 'AI編集は設定で有効化してください',
             child: IconButton(
-              onPressed: settings.aiEnabled ? _openAiEditDialog : null,
+              onPressed: settings.aiEnabled ? () => _openAiEditDialog() : null,
               icon: const Icon(Icons.auto_fix_high),
             ),
           ),

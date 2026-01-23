@@ -148,9 +148,9 @@ class _KeyBindingCaptureDialogState extends State<_KeyBindingCaptureDialog> {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _aiKeyController = TextEditingController();
   final _presetNameControllers =
-      List<TextEditingController>.generate(3, (_) => TextEditingController());
+      List<TextEditingController>.generate(6, (_) => TextEditingController());
   final _presetPromptControllers =
-      List<TextEditingController>.generate(3, (_) => TextEditingController());
+      List<TextEditingController>.generate(6, (_) => TextEditingController());
   Timer? _presetDebounce;
   var _aiKeyVisible = false;
   var _aiKeyRegistered = false;
@@ -202,7 +202,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _presetDebounce?.cancel();
     _presetDebounce = Timer(const Duration(milliseconds: 300), () {
       final presets = List<AiPromptPreset>.generate(
-        3,
+        6,
         (index) => AiPromptPreset(
           name: _presetNameControllers[index].text,
           prompt: _presetPromptControllers[index].text,
@@ -686,7 +686,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 16),
           Text('カスタムプロンプト', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
-          for (var i = 0; i < 3; i++) ...[
+          for (var i = 0; i < 6; i++) ...[
             Text('プリセット ${i + 1}'),
             const SizedBox(height: 4),
             TextField(
