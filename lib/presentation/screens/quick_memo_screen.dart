@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/note.dart';
+import '../providers/ai_providers.dart';
 import '../providers/app_settings_controller.dart';
+import '../providers/note_repository_provider.dart';
 import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
 import '../providers/quick_memo_provider.dart';
 import '../widgets/app_input_decoration.dart';
+import 'note_editor_pane.dart';
 
 class QuickMemoScreen extends ConsumerStatefulWidget {
   const QuickMemoScreen({
@@ -28,6 +31,10 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   String _lastLoaded = '';
   ProviderSubscription<int>? _quickLaunchSub;
   bool _didShowDraftActionSheet = false;
+  bool _aiBusy = false;
+  bool _aiTagSuggesting = false;
+  int _aiTagSuggestToken = 0;
+  List<String> _aiSuggestedTags = [];
 
   int _countText(String text, bool excludeSymbols) {
     if (!excludeSymbols) return text.runes.length;
@@ -92,6 +99,190 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     );
   }
 
+  String _normalizeTag(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed.toLowerCase();
+  }
+
+  Future<Note?> _requireDraftNote() async {
+    final controller = ref.read(quickMemoControllerProvider.notifier);
+    final note = await controller.ensureDraftExists();
+    if (note == null) {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('内容を入力してください')));
+      return null;
+    }
+    return note;
+  }
+
+  Future<void> _addManualTag(Note note) async {
+    final controller = TextEditingController();
+    try {
+      final tag = await showDialog<String>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('タグを追加'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: appInputDecoration(hintText: '例: todo'),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => Navigator.of(context).pop(controller.text),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('キャンセル'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(controller.text),
+                child: const Text('追加'),
+              ),
+            ],
+          );
+        },
+      );
+      final normalized = _normalizeTag(tag ?? '');
+      if (normalized.isEmpty) return;
+      final next = <String>{
+        for (final t in note.manualTags) _normalizeTag(t),
+        normalized,
+      }.toList()
+        ..sort();
+      await ref.read(noteRepositoryProvider).setManualTags(note.uuid, next);
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _removeManualTag(Note note, String tag) async {
+    final target = _normalizeTag(tag);
+    final next = note.manualTags.map(_normalizeTag).where((t) => t != target).toList()
+      ..sort();
+    await ref.read(noteRepositoryProvider).setManualTags(note.uuid, next);
+  }
+
+  Future<void> _applyAutoTag(Note note, String tag) async {
+    final normalized = _normalizeTag(tag);
+    if (normalized.isEmpty) return;
+    final next = <String>{
+      for (final t in note.autoTags) _normalizeTag(t),
+      normalized,
+    }.toList()
+      ..sort();
+    await ref.read(noteRepositoryProvider).setAutoTags(note.uuid, next);
+    if (!mounted) return;
+    setState(() {
+      _aiSuggestedTags = _aiSuggestedTags.where((t) => _normalizeTag(t) != normalized).toList();
+    });
+  }
+
+  Future<void> _removeAutoTag(Note note, String tag) async {
+    final target = _normalizeTag(tag);
+    final next = note.autoTags.map(_normalizeTag).where((t) => t != target).toList()
+      ..sort();
+    await ref.read(noteRepositoryProvider).setAutoTags(note.uuid, next);
+  }
+
+  Future<void> _runAiTagSuggest(Note note) async {
+    if (_aiTagSuggesting) return;
+    if (!mounted) return;
+
+    final token = ++_aiTagSuggestToken;
+    setState(() => _aiTagSuggesting = true);
+
+    try {
+      final ai = ref.read(aiServiceProvider);
+      final tags = await ai.suggestTags(
+        text: _controller.text,
+        existingTags: [
+          ...note.manualTags,
+          ...note.autoTags,
+        ],
+      );
+      if (!mounted || token != _aiTagSuggestToken) return;
+      setState(() => _aiSuggestedTags = tags);
+    } catch (_) {
+      if (!mounted || token != _aiTagSuggestToken) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('AI提案に失敗しました')));
+    } finally {
+      if (mounted && token == _aiTagSuggestToken) {
+        setState(() => _aiTagSuggesting = false);
+      }
+    }
+  }
+
+  Future<void> _openAiEditDialog() async {
+    final settings = ref.read(appSettingsProvider);
+    if (!settings.aiEnabled) return;
+
+    final selection = _controller.selection;
+    final currentText = _controller.text;
+    final hasSelection = selection.isValid && !selection.isCollapsed;
+    final baseOffset = selection.baseOffset >= 0 ? selection.baseOffset : currentText.length;
+    final extentOffset =
+        selection.extentOffset >= 0 ? selection.extentOffset : currentText.length;
+    final start = hasSelection
+        ? (baseOffset < extentOffset ? baseOffset : extentOffset)
+        : baseOffset;
+    final end = hasSelection
+        ? (baseOffset < extentOffset ? extentOffset : baseOffset)
+        : extentOffset;
+    final isFullSelection =
+        hasSelection && start == 0 && end == currentText.length;
+    final targetText = hasSelection ? currentText.substring(start, end) : '';
+    final targetLabel =
+        isFullSelection ? '全文' : (hasSelection ? '選択範囲' : 'カーソル位置');
+    final target = AiEditTarget(
+      originalText: targetText,
+      selectionStart: start,
+      selectionEnd: end,
+      cursorOffset: baseOffset,
+      hasSelection: hasSelection,
+    );
+
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AiEditDialog(
+        targetText: target.originalText,
+        targetLabel: targetLabel,
+        previewEnabled: settings.aiPreviewEnabled,
+        sendKey: settings.aiPromptSendKey,
+        initialPrompt: null,
+        autoRun: false,
+        onBusyChanged: (busy) {
+          if (!mounted) return;
+          setState(() => _aiBusy = busy);
+        },
+      ),
+    );
+    if (result == null) return;
+
+    final current = _controller.text;
+    if (target.hasSelection) {
+      final start = target.selectionStart.clamp(0, current.length);
+      final end = target.selectionEnd.clamp(0, current.length);
+      final next = current.replaceRange(start, end, result);
+      _controller.value = TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(offset: start + result.length),
+      );
+    } else {
+      final insertAt = target.cursorOffset.clamp(0, current.length);
+      final next = current.replaceRange(insertAt, insertAt, result);
+      _controller.value = TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(offset: insertAt + result.length),
+      );
+    }
+    ref.read(quickMemoControllerProvider.notifier).updateContent(_controller.text);
+  }
+
   Future<void> _showDraftActionSheet() async {
     final action = await showModalBottomSheet<_DraftAction>(
       context: context,
@@ -147,6 +338,10 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(quickMemoControllerProvider);
     final settings = ref.watch(appSettingsProvider);
+    final draftNoteAsync = state.currentDraftId == null
+        ? const AsyncValue<Note?>.data(null)
+        : ref.watch(noteByIdProvider(state.currentDraftId!));
+    final draftNote = draftNoteAsync.valueOrNull;
 
     if (!state.loaded) {
       return const Scaffold(
@@ -174,48 +369,42 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       });
     }
 
+    final hasTagBar = (draftNote?.manualTags.isNotEmpty ?? false) ||
+        (draftNote?.autoTags.isNotEmpty ?? false) ||
+        _aiSuggestedTags.isNotEmpty ||
+        _aiTagSuggesting;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(display),
         actions: [
-          PopupMenuButton<String>(
-            tooltip: '下書き',
-            onSelected: (value) async {
-              if (value == '__new') {
-                ref.read(quickMemoControllerProvider.notifier).startNewDraft();
-              } else {
-                await ref
-                    .read(quickMemoControllerProvider.notifier)
-                    .openDraft(value);
-              }
-              if (!mounted) return;
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) FocusScope.of(context).requestFocus(_focusNode);
-              });
+          IconButton(
+            tooltip: 'タグを追加',
+            onPressed: () async {
+              final note = await _requireDraftNote();
+              if (note == null) return;
+              await _addManualTag(note);
             },
-            itemBuilder: (context) {
-              final items = <PopupMenuEntry<String>>[
-                const PopupMenuItem(
-                  value: '__new',
-                  child: Text('新規下書き'),
-                ),
-              ];
-              if (state.drafts.isEmpty) return items;
-              items.add(const PopupMenuDivider());
-              for (final draft in state.drafts) {
-                final label = draft.title.trim().isEmpty ? '（無題）' : draft.title.trim();
-                items.add(
-                  PopupMenuItem(
-                    value: draft.uuid,
-                    child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  ),
-                );
-              }
-              return items;
-            },
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12),
-              child: Icon(Icons.history),
+            icon: const Icon(Icons.label_outline),
+          ),
+          Tooltip(
+            message: settings.aiEnabled ? 'AIでタグ提案' : 'AI編集は設定で有効化してください',
+            child: IconButton(
+              onPressed: settings.aiEnabled && !_aiTagSuggesting
+                  ? () async {
+                      final note = await _requireDraftNote();
+                      if (note == null) return;
+                      await _runAiTagSuggest(note);
+                    }
+                  : null,
+              icon: const Icon(Icons.auto_awesome),
+            ),
+          ),
+          Tooltip(
+            message: settings.aiEnabled ? 'AI編集' : 'AI編集は設定で有効化してください',
+            child: IconButton(
+              onPressed: settings.aiEnabled ? _openAiEditDialog : null,
+              icon: const Icon(Icons.auto_fix_high),
             ),
           ),
           TextButton(
@@ -226,47 +415,87 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       ),
       body: Padding(
         padding: const EdgeInsets.all(12),
-        child: Stack(
+        child: Column(
           children: [
-            TextField(
-              controller: _controller,
-              focusNode: _focusNode,
-              maxLines: null,
-              expands: true,
-              textAlign: TextAlign.left,
-              textAlignVertical: TextAlignVertical.top,
-              decoration: appInputDecoration(hintText: 'クイックメモを書く…'),
-              onChanged: (value) =>
-                  ref.read(quickMemoControllerProvider.notifier).updateContent(value),
-            ),
-            if (settings.charCountEnabled)
-              Positioned(
-                right: 8,
-                bottom: 6,
-                child: ValueListenableBuilder<TextEditingValue>(
-                  valueListenable: _controller,
-                  builder: (context, value, _) {
-                    final count = _countText(
-                      value.text,
-                      settings.charCountExcludeSymbols,
-                    );
-                    final suffix = settings.charCountExcludeSymbols
-                        ? '（記号含まず）'
-                        : '';
-                    return Text(
-                      '$count$suffix',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant,
-                          ),
-                    );
-                  },
+            if (hasTagBar)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    if (_aiTagSuggesting) const Chip(label: Text('AI提案中…')),
+                    if (draftNote != null)
+                      for (final tag in draftNote.manualTags)
+                        InputChip(
+                          label: Text('#${_normalizeTag(tag)}'),
+                          onDeleted: () => _removeManualTag(draftNote, tag),
+                        ),
+                    if (draftNote != null)
+                      for (final tag in draftNote.autoTags)
+                        InputChip(
+                          label: Text('#${_normalizeTag(tag)}'),
+                          backgroundColor:
+                              Theme.of(context).colorScheme.secondaryContainer,
+                          onDeleted: () => _removeAutoTag(draftNote, tag),
+                        ),
+                    if (draftNote != null)
+                      for (final tag in _aiSuggestedTags)
+                        ActionChip(
+                          label: Text('提案: #${_normalizeTag(tag)}'),
+                          onPressed: () => _applyAutoTag(draftNote, tag),
+                        ),
+                  ],
                 ),
               ),
+            Expanded(
+              child: Stack(
+                children: [
+                  TextField(
+                    controller: _controller,
+                    focusNode: _focusNode,
+                    maxLines: null,
+                    expands: true,
+                    readOnly: _aiBusy,
+                    enableInteractiveSelection: !_aiBusy,
+                    textAlign: TextAlign.left,
+                    textAlignVertical: TextAlignVertical.top,
+                    decoration: appInputDecoration(hintText: 'クイックメモを書く…'),
+                    onChanged: (value) => ref
+                        .read(quickMemoControllerProvider.notifier)
+                        .updateContent(value),
+                  ),
+                  if (settings.charCountEnabled)
+                    Positioned(
+                      right: 8,
+                      bottom: 6,
+                      child: ValueListenableBuilder<TextEditingValue>(
+                        valueListenable: _controller,
+                        builder: (context, value, _) {
+                          final count = _countText(
+                            value.text,
+                            settings.charCountExcludeSymbols,
+                          );
+                          final suffix = settings.charCountExcludeSymbols
+                              ? '（記号含まず）'
+                              : '';
+                          return Text(
+                            '$count$suffix',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ],
         ),
       ),

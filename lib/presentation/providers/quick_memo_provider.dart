@@ -20,26 +20,22 @@ class QuickMemoState {
   const QuickMemoState({
     required this.content,
     required this.currentDraftId,
-    required this.drafts,
     required this.loaded,
   });
 
   final String content;
   final String? currentDraftId;
-  final List<Note> drafts;
   final bool loaded;
 
   QuickMemoState copyWith({
     String? content,
     Object? currentDraftId = _unset,
-    List<Note>? drafts,
     bool? loaded,
   }) {
     return QuickMemoState(
       content: content ?? this.content,
       currentDraftId:
           identical(currentDraftId, _unset) ? this.currentDraftId : currentDraftId as String?,
-      drafts: drafts ?? this.drafts,
       loaded: loaded ?? this.loaded,
     );
   }
@@ -47,7 +43,6 @@ class QuickMemoState {
   static const initial = QuickMemoState(
     content: '',
     currentDraftId: null,
-    drafts: [],
     loaded: false,
   );
 }
@@ -65,8 +60,8 @@ class QuickMemoController extends StateNotifier<QuickMemoState> {
 
   Future<void> _init() async {
     final repo = _ref.read(noteRepositoryProvider);
-    _draftsSub = repo.watchDrafts().listen((drafts) {
-      final next = state.copyWith(drafts: drafts, loaded: true);
+    _draftsSub = repo.watchDrafts(limit: 1).listen((drafts) {
+      final next = state.copyWith(loaded: true);
       if (next.currentDraftId == null &&
           next.content.trim().isEmpty &&
           drafts.isNotEmpty) {
@@ -117,14 +112,6 @@ class QuickMemoController extends StateNotifier<QuickMemoState> {
     state = state.copyWith(currentDraftId: null, content: '');
   }
 
-  Future<void> openDraft(String id) async {
-    _debounce?.cancel();
-    final repo = _ref.read(noteRepositoryProvider);
-    final note = await repo.getNote(id);
-    if (note == null || !note.isDraft || note.isDeleted) return;
-    state = state.copyWith(currentDraftId: note.uuid, content: note.content);
-  }
-
   void updateContent(String value) {
     state = state.copyWith(content: value);
     _debounce?.cancel();
@@ -140,6 +127,21 @@ class QuickMemoController extends StateNotifier<QuickMemoState> {
       }
       await noteRepo.updateContent(id, value);
     });
+  }
+
+  Future<Note?> ensureDraftExists() async {
+    final id = state.currentDraftId;
+    if (id != null) {
+      return _ref.read(noteRepositoryProvider).getNote(id);
+    }
+    final text = state.content.trim();
+    if (text.isEmpty) return null;
+    final created = await _ref.read(noteRepositoryProvider).createDraft(initialContent: text);
+    await _ref.read(noteRepositoryProvider).autoArchiveDrafts(
+          maxDrafts: NoteRepository.defaultMaxDrafts,
+        );
+    state = state.copyWith(currentDraftId: created.uuid);
+    return created;
   }
 
   Future<Note?> saveAsNote() async {

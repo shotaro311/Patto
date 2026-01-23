@@ -368,7 +368,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     final selectionStart = useFullTextForPreset ? 0 : start;
     final selectionEnd = useFullTextForPreset ? currentText.length : end;
     final treatAsSelection = hasSelection || useFullTextForPreset;
-    final target = _AiEditTarget(
+    final target = AiEditTarget(
       originalText: targetText,
       selectionStart: selectionStart,
       selectionEnd: selectionEnd,
@@ -379,7 +379,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     final result = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _AiEditDialog(
+      builder: (_) => AiEditDialog(
         targetText: target.originalText,
         targetLabel: targetLabel,
         previewEnabled: settings.aiPreviewEnabled,
@@ -396,7 +396,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     _applyAiResult(target, result);
   }
 
-  void _applyAiResult(_AiEditTarget target, String result) {
+  void _applyAiResult(AiEditTarget target, String result) {
     final current = _controller.text;
     if (target.hasSelection) {
       final start = target.selectionStart.clamp(0, current.length);
@@ -776,8 +776,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   }
 }
 
-class _AiEditTarget {
-  const _AiEditTarget({
+class AiEditTarget {
+  const AiEditTarget({
     required this.originalText,
     required this.selectionStart,
     required this.selectionEnd,
@@ -792,8 +792,9 @@ class _AiEditTarget {
   final bool hasSelection;
 }
 
-class _AiEditDialog extends ConsumerStatefulWidget {
-  const _AiEditDialog({
+class AiEditDialog extends ConsumerStatefulWidget {
+  const AiEditDialog({
+    super.key,
     required this.targetText,
     required this.targetLabel,
     required this.previewEnabled,
@@ -812,10 +813,10 @@ class _AiEditDialog extends ConsumerStatefulWidget {
   final ValueChanged<bool> onBusyChanged;
 
   @override
-  ConsumerState<_AiEditDialog> createState() => _AiEditDialogState();
+  ConsumerState<AiEditDialog> createState() => _AiEditDialogState();
 }
 
-class _AiEditDialogState extends ConsumerState<_AiEditDialog> {
+class _AiEditDialogState extends ConsumerState<AiEditDialog> {
   final _promptController = TextEditingController();
   final _promptFocusNode = FocusNode();
   String _currentResult = '';
