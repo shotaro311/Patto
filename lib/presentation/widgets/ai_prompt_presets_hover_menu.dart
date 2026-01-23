@@ -105,6 +105,12 @@ class _AiPromptPresetsHoverMenuState extends State<AiPromptPresetsHoverMenu> {
   }
 
   @override
+  void didUpdateWidget(covariant AiPromptPresetsHoverMenu oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _entry?.markNeedsBuild();
+  }
+
+  @override
   void dispose() {
     _cancelClose();
     _entry?.remove();
