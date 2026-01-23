@@ -514,7 +514,6 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
 
     final selection = _controller.selection;
     _syncPromptScope(selection);
-    final canUseSelection = selection.isValid && !selection.isCollapsed;
 
     final title = deriveTitleFromContent(_controller.text);
     final display = title.isEmpty ? 'クイックメモ' : title;
@@ -544,15 +543,6 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                 builder: (context) => AiPromptPresetsHoverMenu(
                   presets: settings.aiPromptPresets,
                   enabled: settings.aiEnabled,
-                  scope: _promptScope,
-                  canUseSelection: canUseSelection,
-                  onScopeChanged: (scope) {
-                    setState(() {
-                      _promptScope = scope;
-                      _lastScopeKey =
-                          '${selection.baseOffset}-${selection.extentOffset}-${selection.isCollapsed}';
-                    });
-                  },
                   runningIndex: _runningPresetIndex,
                   onCancelRunning: _cancelInlineAiEdit,
                   closeOnSelect: settings.aiPreviewEnabled,

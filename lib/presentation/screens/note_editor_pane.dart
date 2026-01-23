@@ -628,7 +628,6 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
 
         final selection = _controller.selection;
         _syncPromptScope(selection);
-        final canUseSelection = selection.isValid && !selection.isCollapsed;
 
         final existingTags = <String>{
           for (final t in note.manualTags) _normalizeTag(t),
@@ -705,15 +704,6 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                               builder: (context) => AiPromptPresetsHoverMenu(
                                 presets: settings.aiPromptPresets,
                                 enabled: settings.aiEnabled,
-                                scope: _promptScope,
-                                canUseSelection: canUseSelection,
-                                onScopeChanged: (scope) {
-                                  setState(() {
-                                    _promptScope = scope;
-                                    _lastScopeKey =
-                                        '${selection.baseOffset}-${selection.extentOffset}-${selection.isCollapsed}';
-                                  });
-                                },
                                 runningIndex: _runningPresetIndex,
                                 onCancelRunning: _cancelInlineAiEdit,
                                 closeOnSelect: settings.aiPreviewEnabled,

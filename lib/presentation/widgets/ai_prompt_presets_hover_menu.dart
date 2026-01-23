@@ -15,9 +15,6 @@ class AiPromptPresetsHoverMenu extends StatefulWidget {
     super.key,
     required this.presets,
     required this.enabled,
-    required this.scope,
-    required this.canUseSelection,
-    required this.onScopeChanged,
     required this.onSelect,
     this.runningIndex,
     this.onCancelRunning,
@@ -27,9 +24,6 @@ class AiPromptPresetsHoverMenu extends StatefulWidget {
 
   final List<AiPromptPreset> presets;
   final bool enabled;
-  final AiEditScope scope;
-  final bool canUseSelection;
-  final void Function(AiEditScope scope) onScopeChanged;
   final void Function(AiPromptPreset preset, int index) onSelect;
   final int? runningIndex;
   final VoidCallback? onCancelRunning;
@@ -74,17 +68,10 @@ class _AiPromptPresetsHoverMenuState extends State<AiPromptPresetsHoverMenu> {
           key: _overlayKey,
           link: _link,
           enabled: widget.enabled,
-          scope: widget.scope,
-          canUseSelection: widget.canUseSelection,
-          onScopeChanged: widget.onScopeChanged,
           presets: _items,
-          runningIndex: widget.runningIndex,
-          onCancelRunning: widget.onCancelRunning,
           onSelect: (preset, index) {
             widget.onSelect(preset, index);
-            if (widget.closeOnSelect) {
-              _close();
-            }
+            _close();
           },
           onTapOutside: _close,
           onHoverEnter: _cancelClose,
@@ -108,9 +95,13 @@ class _AiPromptPresetsHoverMenuState extends State<AiPromptPresetsHoverMenu> {
   void didUpdateWidget(covariant AiPromptPresetsHoverMenu oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (_entry == null) return;
+    final nextItems = _items;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _entry == null) return;
-      _entry?.markNeedsBuild();
+      _overlayKey.currentState?.syncFromHost(
+        enabled: widget.enabled,
+        presets: nextItems,
+      );
     });
   }
 
@@ -125,17 +116,30 @@ class _AiPromptPresetsHoverMenuState extends State<AiPromptPresetsHoverMenu> {
   @override
   Widget build(BuildContext context) {
     if (_items.isEmpty) return const SizedBox.shrink();
+    final isRunning = widget.runningIndex != null;
+    final canOpen = widget.enabled && !isRunning;
 
     return CompositedTransformTarget(
       link: _link,
       child: MouseRegion(
-        onEnter: (_) => _open(),
-        onExit: (_) => _scheduleClose(),
+        onEnter: (_) {
+          if (canOpen) _open();
+        },
+        onExit: (_) {
+          if (!isRunning) _scheduleClose();
+        },
         child: Tooltip(
-          message: widget.enabled ? 'カスタムプロンプト' : 'AI編集は設定で有効化してください',
+          message: isRunning
+              ? 'AI編集中… クリックでキャンセル'
+              : widget.enabled
+                  ? 'カスタムプロンプト'
+                  : 'AI編集は設定で有効化してください',
           child: IconButton(
-            onPressed: widget.enabled ? _open : null,
-            icon: const Icon(Icons.playlist_play),
+            onPressed:
+                isRunning ? widget.onCancelRunning : (canOpen ? _open : null),
+            icon: isRunning
+                ? const _InlineCancelLoader()
+                : const Icon(Icons.playlist_play),
           ),
         ),
       ),
@@ -148,13 +152,8 @@ class _AiPromptPresetsOverlay extends StatefulWidget {
     super.key,
     required this.link,
     required this.enabled,
-    required this.scope,
-    required this.canUseSelection,
-    required this.onScopeChanged,
     required this.presets,
     required this.onSelect,
-    required this.runningIndex,
-    required this.onCancelRunning,
     required this.onTapOutside,
     required this.onHoverEnter,
     required this.onHoverExit,
@@ -163,13 +162,8 @@ class _AiPromptPresetsOverlay extends StatefulWidget {
 
   final LayerLink link;
   final bool enabled;
-  final AiEditScope scope;
-  final bool canUseSelection;
-  final void Function(AiEditScope scope) onScopeChanged;
   final List<AiPromptPreset> presets;
   final void Function(AiPromptPreset preset, int index) onSelect;
-  final int? runningIndex;
-  final VoidCallback? onCancelRunning;
   final VoidCallback onTapOutside;
   final VoidCallback onHoverEnter;
   final VoidCallback onHoverExit;
@@ -185,10 +179,14 @@ class _AiPromptPresetsOverlayState extends State<_AiPromptPresetsOverlay>
   late final AnimationController _controller;
   late final CurvedAnimation _curve;
   var _closing = false;
+  late bool _enabled;
+  late List<AiPromptPreset> _presets;
 
   @override
   void initState() {
     super.initState();
+    _enabled = widget.enabled;
+    _presets = widget.presets;
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 160),
@@ -200,6 +198,13 @@ class _AiPromptPresetsOverlayState extends State<_AiPromptPresetsOverlay>
       reverseCurve: Curves.easeInCubic,
     );
     _controller.forward();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AiPromptPresetsOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _enabled = widget.enabled;
+    _presets = widget.presets;
   }
 
   Future<void> dismiss() async {
@@ -216,6 +221,17 @@ class _AiPromptPresetsOverlayState extends State<_AiPromptPresetsOverlay>
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  void syncFromHost({
+    required bool enabled,
+    required List<AiPromptPreset> presets,
+  }) {
+    if (!mounted) return;
+    setState(() {
+      _enabled = enabled;
+      _presets = presets;
+    });
   }
 
   @override
@@ -253,50 +269,13 @@ class _AiPromptPresetsOverlayState extends State<_AiPromptPresetsOverlay>
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 4,
-                              ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  _ScopeChip(
-                                    label: '全文対象',
-                                    selected: widget.scope == AiEditScope.full,
-                                    onTap: () => widget
-                                        .onScopeChanged(AiEditScope.full),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  _ScopeChip(
-                                    label: '選択部分',
-                                    selected:
-                                        widget.scope == AiEditScope.selection,
-                                    onTap: widget.canUseSelection
-                                        ? () => widget.onScopeChanged(
-                                              AiEditScope.selection,
-                                            )
-                                        : null,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  _ScopeChip(
-                                    label: 'カーソル',
-                                    selected:
-                                        widget.scope == AiEditScope.cursor,
-                                    onTap: () => widget
-                                        .onScopeChanged(AiEditScope.cursor),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Divider(height: 1),
                             for (var index = 0;
-                                index < widget.presets.length;
+                                index < _presets.length;
                                 index++)
                               InkWell(
-                                onTap: widget.enabled
+                                onTap: _enabled
                                     ? () =>
-                                        widget.onSelect(widget.presets[index], index)
+                                        widget.onSelect(_presets[index], index)
                                     : null,
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -309,7 +288,7 @@ class _AiPromptPresetsOverlayState extends State<_AiPromptPresetsOverlay>
                                       const SizedBox(width: 8),
                                       Expanded(
                                         child: Text(
-                                          widget.presets[index].name,
+                                          _presets[index].name,
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                           style: Theme.of(context)
@@ -317,10 +296,6 @@ class _AiPromptPresetsOverlayState extends State<_AiPromptPresetsOverlay>
                                               .bodyMedium,
                                         ),
                                       ),
-                                      if (widget.runningIndex == index)
-                                        _InlineCancelLoader(
-                                          onCancel: widget.onCancelRunning,
-                                        ),
                                     ],
                                   ),
                                 ),
@@ -336,41 +311,6 @@ class _AiPromptPresetsOverlayState extends State<_AiPromptPresetsOverlay>
           ),
         ),
       ],
-    );
-  }
-}
-
-class _ScopeChip extends StatelessWidget {
-  const _ScopeChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: selected ? scheme.primaryContainer : scheme.surface,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: scheme.outlineVariant),
-        ),
-        child: Text(
-          label,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: selected ? scheme.onPrimaryContainer : scheme.onSurface,
-              ),
-        ),
-      ),
     );
   }
 }
