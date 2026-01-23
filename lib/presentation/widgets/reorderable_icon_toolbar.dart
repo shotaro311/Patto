@@ -130,16 +130,53 @@ class _CmdDraggableToolbarItem extends StatefulWidget {
 }
 
 class _CmdDraggableToolbarItemState extends State<_CmdDraggableToolbarItem> {
+  var _showIndicator = false;
+  var _insertAfter = false;
+
+  void _setIndicator({
+    required bool show,
+    required bool insertAfter,
+  }) {
+    if (!mounted) return;
+    if (_showIndicator == show && _insertAfter == insertAfter) return;
+    setState(() {
+      _showIndicator = show;
+      _insertAfter = insertAfter;
+    });
+  }
+
+  void _updateIndicator(DragTargetDetails<String> details) {
+    if (details.data == widget.id) return;
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final local = box.globalToLocal(details.offset);
+    final insertAfter = local.dx > box.size.width / 2;
+    _setIndicator(show: true, insertAfter: insertAfter);
+  }
+
+  void _clearIndicator() {
+    if (_showIndicator) {
+      _setIndicator(show: false, insertAfter: _insertAfter);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return DragTarget<String>(
       onWillAcceptWithDetails: (details) =>
           details.data != widget.id,
-      onAcceptWithDetails: (details) =>
-          widget.onReorder(details.data, widget.index),
+      onMove: _updateIndicator,
+      onLeave: (_) => _clearIndicator(),
+      onAcceptWithDetails: (details) {
+        if (details.data == widget.id) return;
+        final targetIndex = widget.index + (_insertAfter ? 1 : 0);
+        widget.onReorder(details.data, targetIndex);
+        _clearIndicator();
+      },
       builder: (context, candidateData, rejectedData) {
         final highlighted = candidateData.isNotEmpty;
         final child = widget.childBuilder(context);
+        final indicatorColor = Theme.of(context).colorScheme.primary;
 
         return Draggable<String>(
           data: widget.id,
@@ -180,7 +217,24 @@ class _CmdDraggableToolbarItemState extends State<_CmdDraggableToolbarItem> {
                         .withValues(alpha: 0.5),
                     borderRadius: BorderRadius.circular(10),
                   )
-                : null,
+                : _showIndicator
+                    ? BoxDecoration(
+                        border: Border(
+                          left: _insertAfter
+                              ? BorderSide.none
+                              : BorderSide(
+                                  color: indicatorColor,
+                                  width: 2,
+                                ),
+                          right: _insertAfter
+                              ? BorderSide(
+                                  color: indicatorColor,
+                                  width: 2,
+                                )
+                              : BorderSide.none,
+                        ),
+                      )
+                    : null,
             child: child,
           ),
         );
