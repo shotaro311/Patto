@@ -11,6 +11,7 @@ import '../providers/quick_launch_provider.dart';
 import '../providers/quick_memo_provider.dart';
 import '../widgets/app_input_decoration.dart';
 import '../widgets/ai_prompt_presets_hover_menu.dart';
+import '../widgets/reorderable_icon_toolbar.dart';
 import 'note_editor_pane.dart';
 
 class QuickMemoScreen extends ConsumerStatefulWidget {
@@ -386,39 +387,57 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       appBar: AppBar(
         title: Text(display),
         actions: [
-          IconButton(
-            tooltip: 'タグを追加',
-            onPressed: () async {
-              final note = await _requireDraftNote();
-              if (note == null) return;
-              await _addManualTag(note);
-            },
-            icon: const Icon(Icons.label_outline),
-          ),
-          Tooltip(
-            message: settings.aiEnabled ? 'AIでタグ提案' : 'AI編集は設定で有効化してください',
-            child: IconButton(
-              onPressed: settings.aiEnabled && !_aiTagSuggesting
-                  ? () async {
-                      final note = await _requireDraftNote();
-                      if (note == null) return;
-                      await _runAiTagSuggest(note);
-                    }
-                  : null,
-              icon: const Icon(Icons.auto_awesome),
-            ),
-          ),
-          AiPromptPresetsHoverMenu(
-            presets: settings.aiPromptPresets,
-            enabled: settings.aiEnabled,
-            onSelect: (preset) => _openAiEditDialog(preset: preset),
-          ),
-          Tooltip(
-            message: settings.aiEnabled ? 'AI編集' : 'AI編集は設定で有効化してください',
-            child: IconButton(
-              onPressed: settings.aiEnabled ? () => _openAiEditDialog() : null,
-              icon: const Icon(Icons.auto_fix_high),
-            ),
+          ReorderableIconToolbar(
+            actions: [
+              ToolbarAction(
+                id: 'custom_prompts',
+                builder: (context) => AiPromptPresetsHoverMenu(
+                  presets: settings.aiPromptPresets,
+                  enabled: settings.aiEnabled,
+                  onSelect: (preset) => _openAiEditDialog(preset: preset),
+                ),
+              ),
+              ToolbarAction(
+                id: 'add_tag',
+                builder: (context) => IconButton(
+                  tooltip: 'タグを追加',
+                  onPressed: () async {
+                    final note = await _requireDraftNote();
+                    if (note == null) return;
+                    await _addManualTag(note);
+                  },
+                  icon: const Icon(Icons.label_outline),
+                ),
+              ),
+              ToolbarAction(
+                id: 'ai_tag_suggest',
+                builder: (context) => Tooltip(
+                  message:
+                      settings.aiEnabled ? 'AIでタグ提案' : 'AI編集は設定で有効化してください',
+                  child: IconButton(
+                    onPressed: settings.aiEnabled && !_aiTagSuggesting
+                        ? () async {
+                            final note = await _requireDraftNote();
+                            if (note == null) return;
+                            await _runAiTagSuggest(note);
+                          }
+                        : null,
+                    icon: const Icon(Icons.auto_awesome),
+                  ),
+                ),
+              ),
+              ToolbarAction(
+                id: 'ai_edit',
+                builder: (context) => Tooltip(
+                  message: settings.aiEnabled ? 'AI編集' : 'AI編集は設定で有効化してください',
+                  child: IconButton(
+                    onPressed:
+                        settings.aiEnabled ? () => _openAiEditDialog() : null,
+                    icon: const Icon(Icons.auto_fix_high),
+                  ),
+                ),
+              ),
+            ],
           ),
           TextButton(
             onPressed: _save,
