@@ -16,7 +16,7 @@ class ToolbarAction {
   final Widget Function(BuildContext context)? feedback;
 }
 
-class ReorderableIconToolbar extends ConsumerWidget {
+class ReorderableIconToolbar extends ConsumerStatefulWidget {
   const ReorderableIconToolbar({
     super.key,
     required this.actions,
@@ -25,15 +25,45 @@ class ReorderableIconToolbar extends ConsumerWidget {
   final List<ToolbarAction> actions;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ReorderableIconToolbar> createState() =>
+      _ReorderableIconToolbarState();
+}
+
+class _ReorderableIconToolbarState
+    extends ConsumerState<ReorderableIconToolbar> {
+  bool _metaPressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _metaPressed = HardwareKeyboard.instance.isMetaPressed;
+    HardwareKeyboard.instance.addHandler(_handleKey);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKey);
+    super.dispose();
+  }
+
+  bool _handleKey(KeyEvent event) {
+    final next = HardwareKeyboard.instance.isMetaPressed;
+    if (next != _metaPressed) {
+      setState(() => _metaPressed = next);
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final order = ref.watch(toolbarOrderProvider);
     final byId = <String, ToolbarAction>{
-      for (final a in actions) a.id: a,
+      for (final a in widget.actions) a.id: a,
     };
     final orderedIds = <String>[
       for (final id in order)
         if (byId.containsKey(id)) id,
-      for (final a in actions)
+      for (final a in widget.actions)
         if (!order.contains(a.id)) a.id,
     ];
 
@@ -69,6 +99,7 @@ class ReorderableIconToolbar extends ConsumerWidget {
                 byId[orderedIds[i]]!.feedback?.call(context) ??
                 byId[orderedIds[i]]!.builder(context),
             onReorder: reorder,
+            canDrag: _metaPressed,
           ),
       ],
     );
@@ -82,6 +113,7 @@ class _CmdDraggableToolbarItem extends StatefulWidget {
     required this.childBuilder,
     required this.feedbackBuilder,
     required this.onReorder,
+    required this.canDrag,
   });
 
   final String id;
@@ -89,6 +121,7 @@ class _CmdDraggableToolbarItem extends StatefulWidget {
   final WidgetBuilder childBuilder;
   final WidgetBuilder feedbackBuilder;
   final void Function(String draggedId, int targetIndex) onReorder;
+  final bool canDrag;
 
   @override
   State<_CmdDraggableToolbarItem> createState() =>
@@ -96,8 +129,6 @@ class _CmdDraggableToolbarItem extends StatefulWidget {
 }
 
 class _CmdDraggableToolbarItemState extends State<_CmdDraggableToolbarItem> {
-  var _canDrag = false;
-
   @override
   Widget build(BuildContext context) {
     return DragTarget<String>(
@@ -109,54 +140,45 @@ class _CmdDraggableToolbarItemState extends State<_CmdDraggableToolbarItem> {
         final highlighted = candidateData.isNotEmpty;
         final child = widget.childBuilder(context);
 
-        return Listener(
-          onPointerDown: (_) {
-            final can = HardwareKeyboard.instance.isMetaPressed;
-            if (can != _canDrag) setState(() => _canDrag = can);
-          },
-          onPointerUp: (_) {
-            if (_canDrag) setState(() => _canDrag = false);
-          },
-          child: Draggable<String>(
-            data: widget.id,
-            maxSimultaneousDrags: _canDrag ? 1 : 0,
-            feedback: Material(
-              color: Colors.transparent,
-              child: Opacity(
-                opacity: 0.9,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface,
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: const [
-                      BoxShadow(
-                        blurRadius: 18,
-                        color: Colors.black26,
-                      ),
-                    ],
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(6),
-                    child: widget.feedbackBuilder(context),
-                  ),
+        return Draggable<String>(
+          data: widget.id,
+          maxSimultaneousDrags: widget.canDrag ? 1 : 0,
+          feedback: Material(
+            color: Colors.transparent,
+            child: Opacity(
+              opacity: 0.9,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: const [
+                    BoxShadow(
+                      blurRadius: 18,
+                      color: Colors.black26,
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: widget.feedbackBuilder(context),
                 ),
               ),
             ),
-            childWhenDragging: Opacity(opacity: 0.35, child: child),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              curve: Curves.easeOutCubic,
-              decoration: highlighted
-                  ? BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .secondaryContainer
-                          .withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(10),
-                    )
-                  : null,
-              child: child,
-            ),
+          ),
+          childWhenDragging: Opacity(opacity: 0.35, child: child),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
+            decoration: highlighted
+                ? BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .secondaryContainer
+                        .withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(10),
+                  )
+                : null,
+            child: child,
           ),
         );
       },
