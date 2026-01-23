@@ -186,7 +186,7 @@ class _CmdDraggableToolbarItemState extends State<_CmdDraggableToolbarItem> {
           feedback: Material(
             color: Colors.transparent,
             child: Opacity(
-              opacity: 0.9,
+              opacity: 0.45,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surface,
@@ -205,39 +205,53 @@ class _CmdDraggableToolbarItemState extends State<_CmdDraggableToolbarItem> {
               ),
             ),
           ),
-          childWhenDragging: Opacity(opacity: 0.35, child: child),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            curve: Curves.easeOutCubic,
-            decoration: highlighted
-                ? BoxDecoration(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .secondaryContainer
-                        .withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(10),
-                  )
-                : _showIndicator
-                    ? BoxDecoration(
-                        border: Border(
-                          left: _insertAfter
-                              ? BorderSide.none
-                              : BorderSide(
-                                  color: indicatorColor,
-                                  width: 2,
-                                ),
-                          right: _insertAfter
-                              ? BorderSide(
-                                  color: indicatorColor,
-                                  width: 2,
-                                )
-                              : BorderSide.none,
+            childWhenDragging: Opacity(opacity: 0.35, child: child),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOutCubic,
+              decoration: highlighted
+                  ? BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .secondaryContainer
+                          .withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(10),
+                    )
+                  : null,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  child,
+                  if (_showIndicator && !_insertAfter)
+                    Positioned(
+                      left: -6,
+                      top: 8,
+                      bottom: 8,
+                      child: Container(
+                        width: 3,
+                        decoration: BoxDecoration(
+                          color: indicatorColor,
+                          borderRadius: BorderRadius.circular(2),
                         ),
-                      )
-                    : null,
-            child: child,
-          ),
-        );
+                      ),
+                    ),
+                  if (_showIndicator && _insertAfter)
+                    Positioned(
+                      right: -6,
+                      top: 8,
+                      bottom: 8,
+                      child: Container(
+                        width: 3,
+                        decoration: BoxDecoration(
+                          color: indicatorColor,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
       },
     );
   }
