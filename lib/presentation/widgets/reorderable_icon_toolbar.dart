@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -143,6 +144,8 @@ class _CmdDraggableToolbarItemState extends State<_CmdDraggableToolbarItem> {
         return Draggable<String>(
           data: widget.id,
           maxSimultaneousDrags: widget.canDrag ? 1 : 0,
+          allowedButtonsFilter: (buttons) =>
+              buttons == kPrimaryButton || buttons == kSecondaryButton,
           feedback: Material(
             color: Colors.transparent,
             child: Opacity(
