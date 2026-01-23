@@ -35,6 +35,11 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   ProviderSubscription<int>? _quickLaunchSub;
   bool _didShowDraftActionSheet = false;
   bool _aiBusy = false;
+  bool _inlineBusy = false;
+  int _inlineToken = 0;
+  int? _runningPresetIndex;
+  AiEditScope _promptScope = AiEditScope.full;
+  String _lastScopeKey = '';
   bool _aiTagSuggesting = false;
   int _aiTagSuggestToken = 0;
   List<String> _aiSuggestedTags = [];
@@ -48,6 +53,129 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       count++;
     }
     return count;
+  }
+
+  AiEditScope _autoScopeForSelection(TextSelection selection) {
+    final hasSelection = selection.isValid && !selection.isCollapsed;
+    return hasSelection ? AiEditScope.selection : AiEditScope.full;
+  }
+
+  void _syncPromptScope(TextSelection selection) {
+    final key =
+        '${selection.baseOffset}-${selection.extentOffset}-${selection.isCollapsed}';
+    if (key == _lastScopeKey) return;
+    _lastScopeKey = key;
+    _promptScope = _autoScopeForSelection(selection);
+  }
+
+  AiEditTarget? _buildTargetForScope(AiEditScope scope) {
+    final selection = _controller.selection;
+    final currentText = _controller.text;
+    final hasSelection = selection.isValid && !selection.isCollapsed;
+    final baseOffset =
+        selection.baseOffset >= 0 ? selection.baseOffset : currentText.length;
+    final extentOffset =
+        selection.extentOffset >= 0 ? selection.extentOffset : currentText.length;
+    final start = hasSelection
+        ? (baseOffset < extentOffset ? baseOffset : extentOffset)
+        : baseOffset;
+    final end = hasSelection
+        ? (baseOffset < extentOffset ? extentOffset : baseOffset)
+        : extentOffset;
+
+    if (scope == AiEditScope.selection && !hasSelection) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('選択範囲がありません。')));
+      return null;
+    }
+
+    switch (scope) {
+      case AiEditScope.full:
+        return AiEditTarget(
+          originalText: currentText,
+          selectionStart: 0,
+          selectionEnd: currentText.length,
+          cursorOffset: baseOffset,
+          hasSelection: true,
+        );
+      case AiEditScope.selection:
+        return AiEditTarget(
+          originalText: currentText.substring(start, end),
+          selectionStart: start,
+          selectionEnd: end,
+          cursorOffset: baseOffset,
+          hasSelection: true,
+        );
+      case AiEditScope.cursor:
+        return AiEditTarget(
+          originalText: '',
+          selectionStart: baseOffset,
+          selectionEnd: baseOffset,
+          cursorOffset: baseOffset,
+          hasSelection: false,
+        );
+    }
+  }
+
+  Future<void> _runInlineAiEdit(AiPromptPreset preset, int index) async {
+    if (_inlineBusy) return;
+    final target = _buildTargetForScope(_promptScope);
+    if (target == null) return;
+
+    final token = ++_inlineToken;
+    setState(() {
+      _inlineBusy = true;
+      _runningPresetIndex = index;
+    });
+
+    try {
+      final ai = ref.read(aiServiceProvider);
+      final result = await ai.editText(
+        instruction: preset.prompt,
+        originalText: target.originalText,
+      );
+      if (!mounted || token != _inlineToken) return;
+      final current = _controller.text;
+      if (target.hasSelection) {
+        final start = target.selectionStart.clamp(0, current.length);
+        final end = target.selectionEnd.clamp(0, current.length);
+        final next = current.replaceRange(start, end, result);
+        _controller.value = TextEditingValue(
+          text: next,
+          selection: TextSelection.collapsed(offset: start + result.length),
+        );
+      } else {
+        final insertAt = target.cursorOffset.clamp(0, current.length);
+        final next = current.replaceRange(insertAt, insertAt, result);
+        _controller.value = TextEditingValue(
+          text: next,
+          selection: TextSelection.collapsed(offset: insertAt + result.length),
+        );
+      }
+      ref
+          .read(quickMemoControllerProvider.notifier)
+          .updateContent(_controller.text);
+    } catch (_) {
+      if (!mounted || token != _inlineToken) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('AI編集に失敗しました。')));
+    } finally {
+      if (mounted && token == _inlineToken) {
+        setState(() {
+          _inlineBusy = false;
+          _runningPresetIndex = null;
+        });
+      }
+    }
+  }
+
+  void _cancelInlineAiEdit() {
+    _inlineToken++;
+    if (!mounted) return;
+    setState(() {
+      _inlineBusy = false;
+      _runningPresetIndex = null;
+    });
   }
 
   @override
@@ -219,7 +347,10 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     }
   }
 
-  Future<void> _openAiEditDialog({AiPromptPreset? preset}) async {
+  Future<void> _openAiEditDialog({
+    AiPromptPreset? preset,
+    AiEditScope? scopeOverride,
+  }) async {
     final settings = ref.read(appSettingsProvider);
     if (!settings.aiEnabled) return;
 
@@ -235,17 +366,32 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     final end = hasSelection
         ? (baseOffset < extentOffset ? extentOffset : baseOffset)
         : extentOffset;
-    final useFullTextForPreset = preset != null && !hasSelection;
-    final isFullSelection = (hasSelection && start == 0 && end == currentText.length) ||
-        useFullTextForPreset;
-    final targetText = useFullTextForPreset
+    final isFullSelection = hasSelection && start == 0 && end == currentText.length;
+    final autoScope = preset != null
+        ? (hasSelection ? (isFullSelection ? AiEditScope.full : AiEditScope.selection)
+            : AiEditScope.full)
+        : (hasSelection ? (isFullSelection ? AiEditScope.full : AiEditScope.selection)
+            : AiEditScope.cursor);
+    final scope = scopeOverride ?? autoScope;
+    if (scope == AiEditScope.selection && !hasSelection) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('選択範囲がありません。')));
+      return;
+    }
+
+    final useFullText = scope == AiEditScope.full;
+    final treatAsSelection = scope != AiEditScope.cursor;
+    final targetText = useFullText
         ? currentText
         : (hasSelection ? currentText.substring(start, end) : '');
-    final targetLabel =
-        isFullSelection ? '全文' : (hasSelection ? '選択範囲' : 'カーソル位置');
-    final selectionStart = useFullTextForPreset ? 0 : start;
-    final selectionEnd = useFullTextForPreset ? currentText.length : end;
-    final treatAsSelection = hasSelection || useFullTextForPreset;
+    final targetLabel = switch (scope) {
+      AiEditScope.full => '全文',
+      AiEditScope.selection => '選択範囲',
+      AiEditScope.cursor => 'カーソル位置',
+    };
+    final selectionStart = useFullText ? 0 : start;
+    final selectionEnd = useFullText ? currentText.length : end;
     final target = AiEditTarget(
       originalText: targetText,
       selectionStart: selectionStart,
@@ -366,6 +512,10 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       _lastLoaded = state.content;
     }
 
+    final selection = _controller.selection;
+    _syncPromptScope(selection);
+    final canUseSelection = selection.isValid && !selection.isCollapsed;
+
     final title = deriveTitleFromContent(_controller.text);
     final display = title.isEmpty ? 'クイックメモ' : title;
 
@@ -394,7 +544,30 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                 builder: (context) => AiPromptPresetsHoverMenu(
                   presets: settings.aiPromptPresets,
                   enabled: settings.aiEnabled,
-                  onSelect: (preset) => _openAiEditDialog(preset: preset),
+                  scope: _promptScope,
+                  canUseSelection: canUseSelection,
+                  onScopeChanged: (scope) {
+                    setState(() {
+                      _promptScope = scope;
+                      _lastScopeKey =
+                          '${selection.baseOffset}-${selection.extentOffset}-${selection.isCollapsed}';
+                    });
+                  },
+                  runningIndex: _runningPresetIndex,
+                  onCancelRunning: _cancelInlineAiEdit,
+                  closeOnSelect: settings.aiPreviewEnabled,
+                  keepOpenWhileRunning: !settings.aiPreviewEnabled,
+                  onSelect: (preset, index) {
+                    if (!settings.aiEnabled) return;
+                    if (settings.aiPreviewEnabled) {
+                      _openAiEditDialog(
+                        preset: preset,
+                        scopeOverride: _promptScope,
+                      );
+                      return;
+                    }
+                    _runInlineAiEdit(preset, index);
+                  },
                 ),
               ),
               ToolbarAction(
@@ -488,8 +661,8 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                     focusNode: _focusNode,
                     maxLines: null,
                     expands: true,
-                    readOnly: _aiBusy,
-                    enableInteractiveSelection: !_aiBusy,
+                    readOnly: _aiBusy || _inlineBusy,
+                    enableInteractiveSelection: !(_aiBusy || _inlineBusy),
                     textAlign: TextAlign.left,
                     textAlignVertical: TextAlignVertical.top,
                     decoration: appInputDecoration(hintText: 'クイックメモを書く…'),
