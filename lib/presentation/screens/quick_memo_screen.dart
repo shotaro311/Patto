@@ -129,10 +129,13 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     });
 
     try {
+      final settings = ref.read(appSettingsProvider);
       final ai = ref.read(aiServiceProvider);
       final result = await ai.editText(
         instruction: preset.prompt,
         originalText: target.originalText,
+        useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
+        useExternalApi: settings.aiExternalApiEnabled,
       );
       if (!mounted || token != _inlineToken) return;
       final current = _controller.text;
@@ -326,6 +329,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     setState(() => _aiTagSuggesting = true);
 
     try {
+      final settings = ref.read(appSettingsProvider);
       final ai = ref.read(aiServiceProvider);
       final tags = await ai.suggestTags(
         text: _controller.text,
@@ -333,6 +337,8 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
           ...note.manualTags,
           ...note.autoTags,
         ],
+        useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
+        useExternalApi: settings.aiExternalApiEnabled,
       );
       if (!mounted || token != _aiTagSuggestToken) return;
       setState(() => _aiSuggestedTags = tags);

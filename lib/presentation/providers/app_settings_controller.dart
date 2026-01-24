@@ -47,7 +47,12 @@ class AppSettingsController extends StateNotifier<AppSettings> {
       charCountEnabled: prefs.getBool(_kCharCountEnabled) ?? true,
       charCountExcludeSymbols:
           prefs.getBool(_kCharCountExcludeSymbols) ?? false,
-      aiEnabled: prefs.getBool(_kAiEnabled) ?? false,
+      aiAppleIntelligenceEnabled:
+          prefs.getBool(_kAiAppleIntelligenceEnabled) ?? false,
+      aiExternalApiEnabled:
+          prefs.getBool(_kAiExternalApiEnabled) ??
+              prefs.getBool(_kAiEnabled) ??
+              false,
       aiPreviewEnabled: prefs.getBool(_kAiPreviewEnabled) ?? true,
       aiEditKeyBinding: _readKeyBinding(
         prefs.getString(_kAiEditKeyBinding),
@@ -167,9 +172,14 @@ class AppSettingsController extends StateNotifier<AppSettings> {
     state = state.copyWith(charCountExcludeSymbols: enabled);
   }
 
-  Future<void> setAiEnabled(bool enabled) async {
-    await _prefs.setBool(_kAiEnabled, enabled);
-    state = state.copyWith(aiEnabled: enabled);
+  Future<void> setAiExternalApiEnabled(bool enabled) async {
+    await _prefs.setBool(_kAiExternalApiEnabled, enabled);
+    state = state.copyWith(aiExternalApiEnabled: enabled);
+  }
+
+  Future<void> setAiAppleIntelligenceEnabled(bool enabled) async {
+    await _prefs.setBool(_kAiAppleIntelligenceEnabled, enabled);
+    state = state.copyWith(aiAppleIntelligenceEnabled: enabled);
   }
 
   Future<void> setAiPreviewEnabled(bool enabled) async {
@@ -226,6 +236,8 @@ const _kMacShowHideKeyBinding = 'macShowHideKeyBinding';
 const _kCharCountEnabled = 'charCountEnabled';
 const _kCharCountExcludeSymbols = 'charCountExcludeSymbols';
 const _kAiEnabled = 'aiEnabled';
+const _kAiExternalApiEnabled = 'aiExternalApiEnabled';
+const _kAiAppleIntelligenceEnabled = 'aiAppleIntelligenceEnabled';
 const _kAiPreviewEnabled = 'aiPreviewEnabled';
 const _kAiEditKeyBinding = 'aiEditKeyBinding';
 const _kAiPromptSendKey = 'aiPromptSendKey';

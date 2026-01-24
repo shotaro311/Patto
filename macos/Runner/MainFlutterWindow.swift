@@ -24,6 +24,12 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     let monitor = QuickLaunchMonitor(channel: channel, window: self)
     quickLaunchMonitor = monitor
 
+    let aiChannel = FlutterMethodChannel(
+      name: "com.patto/apple_intelligence",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    let aiBridge = AppleIntelligenceBridge()
+
     channel.setMethodCallHandler { call, result in
       switch call.method {
       case "configure":
@@ -42,6 +48,10 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
       default:
         result(FlutterMethodNotImplemented)
       }
+    }
+
+    aiChannel.setMethodCallHandler { call, result in
+      aiBridge.handle(call, result: result)
     }
 
     super.awakeFromNib()

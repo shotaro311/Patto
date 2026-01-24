@@ -4,13 +4,61 @@ import 'package:google_generative_ai/google_generative_ai.dart';
 
 import '../core/config/env.dart';
 import 'ai_key_repository.dart';
+import 'apple_intelligence_client.dart';
 
 class AiService {
-  const AiService(this._keyRepository);
+  const AiService(this._keyRepository, this._appleClient);
 
   final AiKeyRepository _keyRepository;
+  final AppleIntelligenceClient _appleClient;
+
+  Future<AppleIntelligenceAvailability> checkAppleIntelligenceAvailability() {
+    return _appleClient.checkAvailability();
+  }
 
   Future<List<String>> suggestTags({
+    required String text,
+    required List<String> existingTags,
+    required bool useAppleIntelligence,
+    required bool useExternalApi,
+  }) async {
+    if (useAppleIntelligence) {
+      final availability = await _appleClient.checkAvailability();
+      if (availability.isAvailable) {
+        try {
+          final tags = await _appleClient.suggestTags(
+            text: text,
+            existingTags: existingTags,
+          );
+          return tags;
+        } catch (_) {
+          if (useExternalApi) {
+            return _suggestTagsWithExternal(
+              text: text,
+              existingTags: existingTags,
+            );
+          }
+          rethrow;
+        }
+      }
+      if (useExternalApi) {
+        return _suggestTagsWithExternal(
+          text: text,
+          existingTags: existingTags,
+        );
+      }
+      throw const AiException('Apple Intelligenceを利用できません');
+    }
+    if (useExternalApi) {
+      return _suggestTagsWithExternal(
+        text: text,
+        existingTags: existingTags,
+      );
+    }
+    throw const AiException('AIが利用できません');
+  }
+
+  Future<List<String>> _suggestTagsWithExternal({
     required String text,
     required List<String> existingTags,
   }) async {
@@ -79,6 +127,47 @@ class AiService {
   }
 
   Future<String> editText({
+    required String instruction,
+    required String originalText,
+    required bool useAppleIntelligence,
+    required bool useExternalApi,
+  }) async {
+    if (useAppleIntelligence) {
+      final availability = await _appleClient.checkAvailability();
+      if (availability.isAvailable) {
+        try {
+          return await _appleClient.editText(
+            instruction: instruction,
+            originalText: originalText,
+          );
+        } catch (_) {
+          if (useExternalApi) {
+            return _editTextWithExternal(
+              instruction: instruction,
+              originalText: originalText,
+            );
+          }
+          rethrow;
+        }
+      }
+      if (useExternalApi) {
+        return _editTextWithExternal(
+          instruction: instruction,
+          originalText: originalText,
+        );
+      }
+      throw const AiException('Apple Intelligenceを利用できません');
+    }
+    if (useExternalApi) {
+      return _editTextWithExternal(
+        instruction: instruction,
+        originalText: originalText,
+      );
+    }
+    throw const AiException('AIが利用できません');
+  }
+
+  Future<String> _editTextWithExternal({
     required String instruction,
     required String originalText,
   }) async {

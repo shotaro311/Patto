@@ -145,10 +145,13 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     });
 
     try {
+      final settings = ref.read(appSettingsProvider);
       final ai = ref.read(aiServiceProvider);
       final result = await ai.editText(
         instruction: preset.prompt,
         originalText: target.originalText,
+        useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
+        useExternalApi: settings.aiExternalApiEnabled,
       );
       if (!mounted || token != _inlineToken) return;
       _applyAiResult(target, result);
@@ -374,6 +377,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     setState(() => _aiTagSuggesting = true);
 
     try {
+      final settings = ref.read(appSettingsProvider);
       final ai = ref.read(aiServiceProvider);
       final tags = await ai.suggestTags(
         text: _controller.text,
@@ -381,6 +385,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
           ...note.manualTags,
           ...note.autoTags,
         ],
+        useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
+        useExternalApi: settings.aiExternalApiEnabled,
       );
       if (!mounted || token != _aiTagSuggestToken) return;
       setState(() => _aiSuggestedTags = tags);
@@ -988,10 +994,13 @@ class _AiEditDialogState extends ConsumerState<AiEditDialog> {
 
     String result;
     try {
+      final settings = ref.read(appSettingsProvider);
       final ai = ref.read(aiServiceProvider);
       result = await ai.editText(
         instruction: instruction,
         originalText: widget.targetText,
+        useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
+        useExternalApi: settings.aiExternalApiEnabled,
       );
     } catch (_) {
       if (!mounted || token != _runToken) return;

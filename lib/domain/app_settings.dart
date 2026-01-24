@@ -108,7 +108,8 @@ class AppSettings {
     required this.macShowHideKeyBinding,
     required this.charCountEnabled,
     required this.charCountExcludeSymbols,
-    required this.aiEnabled,
+    required this.aiAppleIntelligenceEnabled,
+    required this.aiExternalApiEnabled,
     required this.aiPreviewEnabled,
     required this.aiEditKeyBinding,
     required this.aiPromptSendKey,
@@ -124,13 +125,16 @@ class AppSettings {
   final MacKeyBinding? macShowHideKeyBinding;
   final bool charCountEnabled;
   final bool charCountExcludeSymbols;
-  final bool aiEnabled;
+  final bool aiAppleIntelligenceEnabled;
+  final bool aiExternalApiEnabled;
   final bool aiPreviewEnabled;
   final MacKeyBinding? aiEditKeyBinding;
   final AiPromptSendKey aiPromptSendKey;
   final List<AiPromptPreset> aiPromptPresets;
   final String? lastOpenedNoteId;
   final DateTime? lastSyncAt;
+
+  bool get aiEnabled => aiAppleIntelligenceEnabled || aiExternalApiEnabled;
 
   AppSettings copyWith({
     bool? syncEnabled,
@@ -139,7 +143,8 @@ class AppSettings {
     Object? macShowHideKeyBinding = _unset,
     bool? charCountEnabled,
     bool? charCountExcludeSymbols,
-    bool? aiEnabled,
+    bool? aiAppleIntelligenceEnabled,
+    bool? aiExternalApiEnabled,
     bool? aiPreviewEnabled,
     Object? aiEditKeyBinding = _unset,
     AiPromptSendKey? aiPromptSendKey,
@@ -158,7 +163,10 @@ class AppSettings {
       charCountEnabled: charCountEnabled ?? this.charCountEnabled,
       charCountExcludeSymbols:
           charCountExcludeSymbols ?? this.charCountExcludeSymbols,
-      aiEnabled: aiEnabled ?? this.aiEnabled,
+      aiAppleIntelligenceEnabled:
+          aiAppleIntelligenceEnabled ?? this.aiAppleIntelligenceEnabled,
+      aiExternalApiEnabled:
+          aiExternalApiEnabled ?? this.aiExternalApiEnabled,
       aiPreviewEnabled: aiPreviewEnabled ?? this.aiPreviewEnabled,
       aiEditKeyBinding: identical(aiEditKeyBinding, _unset)
           ? this.aiEditKeyBinding

@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import '../../core/providers.dart';
 import '../../data/models/note.dart';
 import '../../domain/app_settings.dart';
+import '../../services/apple_intelligence_client.dart';
 import '../../services/sync_service.dart';
 import '../providers/ai_providers.dart';
 import '../providers/app_settings_controller.dart';
@@ -17,6 +18,7 @@ import '../providers/auth_providers.dart';
 import '../providers/note_repository_provider.dart';
 import '../providers/sync_providers.dart';
 import '../widgets/app_input_decoration.dart';
+import '../widgets/top_right_toast.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -253,6 +255,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('AI APIキーを保存しました')),
     );
+  }
+
+  Future<void> _toggleAppleIntelligence(bool enabled) async {
+    if (!enabled) {
+      await ref
+          .read(appSettingsProvider.notifier)
+          .setAiAppleIntelligenceEnabled(false);
+      return;
+    }
+    final ai = ref.read(aiServiceProvider);
+    final availability = await ai.checkAppleIntelligenceAvailability();
+    if (!mounted) return;
+    if (!availability.isAvailable) {
+      showTopRightToast(
+        context,
+        'Apple Intelligence対応端末でないか、設定がされていないため利用できません。',
+      );
+      return;
+    }
+    await ref
+        .read(appSettingsProvider.notifier)
+        .setAiAppleIntelligenceEnabled(true);
   }
 
   Future<void> _deleteAiKey() async {
@@ -586,11 +610,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const Divider(height: 32),
           Text('AI', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
+          if (Platform.isMacOS)
+            SwitchListTile(
+              title: const Text('Apple Intelligenceを有効化'),
+              value: settings.aiAppleIntelligenceEnabled,
+              onChanged: _toggleAppleIntelligence,
+            ),
           SwitchListTile(
             title: const Text('外部AI APIを有効化'),
-            value: settings.aiEnabled,
-            onChanged: (v) =>
-                ref.read(appSettingsProvider.notifier).setAiEnabled(v),
+            value: settings.aiExternalApiEnabled,
+            onChanged: (v) => ref
+                .read(appSettingsProvider.notifier)
+                .setAiExternalApiEnabled(v),
           ),
           SwitchListTile(
             title: const Text('AI編集プレビューを表示'),
