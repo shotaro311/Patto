@@ -44,8 +44,9 @@ macOS / iOS を中心に、パッと起動してすぐ入力できる軽量メ�
 | ID | 機能 | 説明 | 優先度 |
 |----|------|------|--------|
 | F-040 | タグ（手動） | メモに手動でタグを付けられる（`manualTags`） | 必須 |
-| F-041 | タグ（自動・提案） | AI等でタグ候補（`autoTags`）を生成し、**提案として提示**（確認して適用） | 必須 |
+| F-041 | タグ（自動・提案） | AI等でタグ候補（`autoTags`）を生成し、**タグ辞書を参照して既存タグを優先**しつつ**最大5件を提案として提示**（確認して適用／新規タグは選択時に辞書登録） | 必須 |
 | F-042 | リンク | `[[リンク]]`等でメモ同士を関連付けできる（リンク一覧/参照元の表示はMVP内で最小） | 必須 |
+| F-043 | タグ辞書管理 | タグ辞書を一覧表示し、各タグの使用件数を表示、タグ名の変更／削除ができる（Supabaseで同期対象） | 必須 |
 
 #### 2.1.2 同期機能
 | ID | 機能 | 説明 | 優先度 |
@@ -259,10 +260,38 @@ CREATE INDEX idx_notes_updated ON public.notes(server_updated_at);
 CREATE INDEX idx_notes_sync ON public.notes(user_id, server_updated_at);
 ```
 
+#### tag_dictionary
+```sql
+CREATE TABLE public.tag_dictionary (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  canonical_tag TEXT NOT NULL,
+  aliases TEXT[] NOT NULL DEFAULT '{}',
+  use_count INTEGER NOT NULL DEFAULT 0,
+  last_used_at TIMESTAMPTZ,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  local_updated_at TIMESTAMPTZ NOT NULL,
+  server_updated_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+
+  sync_version INTEGER DEFAULT 1,
+  client_id TEXT
+);
+
+CREATE INDEX idx_tag_dictionary_user_id ON public.tag_dictionary(user_id);
+CREATE INDEX idx_tag_dictionary_updated ON public.tag_dictionary(server_updated_at);
+CREATE INDEX idx_tag_dictionary_sync ON public.tag_dictionary(user_id, server_updated_at);
+
+-- upsert(onConflict: user_id,canonical_tag) と整合する一意制約
+CREATE UNIQUE INDEX ux_tag_dictionary_user_canonical
+  ON public.tag_dictionary(user_id, canonical_tag);
+```
+
 ### 6.2 Row Level Security (RLS)
 ```sql
 -- notes テーブルのRLS
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tag_dictionary ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users can view own notes"
   ON public.notes FOR SELECT
@@ -275,12 +304,25 @@ CREATE POLICY "Users can insert own notes"
 CREATE POLICY "Users can update own notes"
   ON public.notes FOR UPDATE
   USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can view own tag dictionary"
+  ON public.tag_dictionary FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own tag dictionary"
+  ON public.tag_dictionary FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own tag dictionary"
+  ON public.tag_dictionary FOR UPDATE
+  USING (auth.uid() = user_id);
 ```
 
 ### 6.3 リアルタイム同期
 ```sql
 -- リアルタイム通知の有効化
 ALTER PUBLICATION supabase_realtime ADD TABLE public.notes;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.tag_dictionary;
 ```
 
 ---

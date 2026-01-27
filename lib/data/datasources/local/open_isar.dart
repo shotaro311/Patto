@@ -3,13 +3,14 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../models/note.dart';
+import '../../models/tag_dictionary_entry.dart';
 
 Future<Isar> openIsar() async {
   final dir = await getApplicationSupportDirectory();
-  final isar = await Isar.open(
-    [NoteSchema],
-    directory: dir.path,
-  );
+  final isar = await Isar.open([
+    NoteSchema,
+    TagDictionaryEntrySchema,
+  ], directory: dir.path);
   if (kDebugMode) {
     try {
       final total = await isar.notes.where().count();

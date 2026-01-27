@@ -8,26 +8,68 @@ enum AppleIntelligenceAvailability {
   notEligible,
   notEnabled,
   modelNotReady,
-  unknown,
-}
+  unknown;
 
-extension AppleIntelligenceAvailabilityX on AppleIntelligenceAvailability {
   bool get isAvailable => this == AppleIntelligenceAvailability.available;
+
+  String get localizedMessage => switch (this) {
+    AppleIntelligenceAvailability.available => 'Apple Intelligenceが利用可能です',
+    AppleIntelligenceAvailability.notSupported =>
+      'Apple Intelligenceはこのプラットフォームではサポートされていません',
+    AppleIntelligenceAvailability.notEligible =>
+      'このデバイスはApple Intelligenceに対応していません',
+    AppleIntelligenceAvailability.notEnabled =>
+      'Apple Intelligenceが有効化されていません。システム設定で有効にしてください',
+    AppleIntelligenceAvailability.modelNotReady =>
+      'Apple Intelligenceのモデルが準備中です。しばらくお待ちください',
+    AppleIntelligenceAvailability.unknown => 'Apple Intelligenceの状態を確認できませんでした',
+  };
 }
 
 class AppleIntelligenceClient {
   const AppleIntelligenceClient();
 
-  static const MethodChannel _channel =
-      MethodChannel('com.patto/apple_intelligence');
+  static const MethodChannel _channel = MethodChannel(
+    'com.patto/apple_intelligence',
+  );
+
+  static const _refusalPatterns = [
+    // English patterns
+    "i'm sorry",
+    "i am sorry",
+    "i can't assist",
+    "i cannot assist",
+    "i can't help",
+    "i cannot help",
+    "i'm unable",
+    "i am unable",
+    "sorry, but i can't",
+    "sorry, but i cannot",
+    "i'm not able",
+    "i am not able",
+    "as an ai",
+    "as a language model",
+    // Japanese patterns
+    "申し訳",
+    "お手伝いできません",
+    "対応できません",
+    "できかねます",
+    "お応えできません",
+    "お答えできません",
+    "サポートできません",
+    "ご要望にお応えできません",
+    "aiとして",
+    "言語モデルとして",
+  ];
 
   Future<AppleIntelligenceAvailability> checkAvailability() async {
     if (!Platform.isMacOS) {
       return AppleIntelligenceAvailability.notSupported;
     }
     try {
-      final result =
-          await _channel.invokeMethod<Map<Object?, Object?>>('checkAvailability');
+      final result = await _channel.invokeMethod<Map<Object?, Object?>>(
+        'checkAvailability',
+      );
       final status = result?['status'] as String?;
       return _mapStatus(status);
     } on PlatformException catch (_) {
@@ -42,35 +84,44 @@ class AppleIntelligenceClient {
     if (!Platform.isMacOS) {
       throw PlatformException(
         code: 'not_supported',
-        message: 'Apple Intelligence is not supported on this platform.',
+        message: 'Apple Intelligenceはこのプラットフォームではサポートされていません',
       );
     }
     final result = await _channel.invokeMethod<String>('editText', {
       'instruction': instruction,
       'text': originalText,
     });
-    if (result == null || result.trim().isEmpty) {
+    final trimmed = result?.trim() ?? '';
+    if (trimmed.isEmpty) {
       throw PlatformException(
         code: 'empty_response',
-        message: 'Apple Intelligence returned empty response.',
+        message: 'Apple Intelligenceから応答がありませんでした',
       );
     }
-    return result;
+    if (_looksLikeRefusal(trimmed)) {
+      throw PlatformException(
+        code: 'refused',
+        message: 'Apple Intelligenceがこのリクエストを拒否しました',
+      );
+    }
+    return trimmed;
   }
 
   Future<List<String>> suggestTags({
     required String text,
     required List<String> existingTags,
+    required List<String> dictionaryTags,
   }) async {
     if (!Platform.isMacOS) {
       throw PlatformException(
         code: 'not_supported',
-        message: 'Apple Intelligence is not supported on this platform.',
+        message: 'Apple Intelligenceはこのプラットフォームではサポートされていません',
       );
     }
     final result = await _channel.invokeMethod<List<dynamic>>('suggestTags', {
       'text': text,
       'existingTags': existingTags,
+      'dictionaryTags': dictionaryTags,
     });
     if (result == null) return const [];
     return result.whereType<String>().toList(growable: false);
@@ -86,5 +137,10 @@ class AppleIntelligenceClient {
       'notSupported' => AppleIntelligenceAvailability.notSupported,
       _ => AppleIntelligenceAvailability.unknown,
     };
+  }
+
+  bool _looksLikeRefusal(String text) {
+    final lower = text.toLowerCase();
+    return _refusalPatterns.any(lower.contains);
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/note.dart';
+import '../../data/repositories/tag_dictionary_repository.dart';
 import '../../domain/app_settings.dart';
 import '../providers/ai_providers.dart';
 import '../providers/app_settings_controller.dart';
@@ -9,16 +10,14 @@ import '../providers/note_repository_provider.dart';
 import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
 import '../providers/quick_memo_provider.dart';
+import '../providers/tag_dictionary_repository_provider.dart';
 import '../widgets/app_input_decoration.dart';
 import '../widgets/ai_prompt_presets_hover_menu.dart';
 import '../widgets/reorderable_icon_toolbar.dart';
 import 'note_editor_pane.dart';
 
 class QuickMemoScreen extends ConsumerStatefulWidget {
-  const QuickMemoScreen({
-    super.key,
-    this.showDraftActionSheetOnOpen = false,
-  });
+  const QuickMemoScreen({super.key, this.showDraftActionSheetOnOpen = false});
 
   final bool showDraftActionSheetOnOpen;
 
@@ -27,14 +26,12 @@ class QuickMemoScreen extends ConsumerStatefulWidget {
 }
 
 class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
-  static final RegExp _symbolPattern =
-      RegExp(r'[\p{P}\p{S}]', unicode: true);
+  static final RegExp _symbolPattern = RegExp(r'[\p{P}\p{S}]', unicode: true);
   final _focusNode = FocusNode();
   final _controller = TextEditingController();
   String _lastLoaded = '';
   ProviderSubscription<int>? _quickLaunchSub;
   bool _didShowDraftActionSheet = false;
-  bool _aiBusy = false;
   bool _inlineBusy = false;
   int _inlineToken = 0;
   int? _runningPresetIndex;
@@ -72,10 +69,12 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     final selection = _controller.selection;
     final currentText = _controller.text;
     final hasSelection = selection.isValid && !selection.isCollapsed;
-    final baseOffset =
-        selection.baseOffset >= 0 ? selection.baseOffset : currentText.length;
-    final extentOffset =
-        selection.extentOffset >= 0 ? selection.extentOffset : currentText.length;
+    final baseOffset = selection.baseOffset >= 0
+        ? selection.baseOffset
+        : currentText.length;
+    final extentOffset = selection.extentOffset >= 0
+        ? selection.extentOffset
+        : currentText.length;
     final start = hasSelection
         ? (baseOffset < extentOffset ? baseOffset : extentOffset)
         : baseOffset;
@@ -84,8 +83,9 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
         : extentOffset;
 
     if (scope == AiEditScope.selection && !hasSelection) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('選択範囲がありません。')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('選択範囲がありません。')));
       return null;
     }
 
@@ -160,8 +160,9 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
           .updateContent(_controller.text);
     } catch (_) {
       if (!mounted || token != _inlineToken) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('AI編集に失敗しました。')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('AI編集に失敗しました。')));
     } finally {
       if (mounted && token == _inlineToken) {
         setState(() {
@@ -184,15 +185,15 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   @override
   void initState() {
     super.initState();
-    _quickLaunchSub = ref.listenManual<int>(
-      quickLaunchEventProvider,
-      (previous, next) {
-        if (!mounted) return;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) FocusScope.of(context).requestFocus(_focusNode);
-        });
-      },
-    );
+    _quickLaunchSub = ref.listenManual<int>(quickLaunchEventProvider, (
+      previous,
+      next,
+    ) {
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) FocusScope.of(context).requestFocus(_focusNode);
+      });
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) FocusScope.of(context).requestFocus(_focusNode);
     });
@@ -211,8 +212,9 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     final note = await controller.saveAsNote();
     if (note == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('内容を入力してください')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('内容を入力してください')));
       return;
     }
 
@@ -234,9 +236,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   }
 
   String _normalizeTag(String value) {
-    final trimmed = value.trim();
-    if (trimmed.isEmpty) return '';
-    return trimmed.toLowerCase();
+    return TagDictionaryRepository.normalizeTag(value);
   }
 
   Future<Note?> _requireDraftNote() async {
@@ -244,8 +244,9 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     final note = await controller.ensureDraftExists();
     if (note == null) {
       if (!mounted) return null;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('内容を入力してください')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('内容を入力してください')));
       return null;
     }
     return note;
@@ -279,45 +280,47 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
           );
         },
       );
-      final normalized = _normalizeTag(tag ?? '');
-      if (normalized.isEmpty) return;
-      final next = <String>{
-        for (final t in note.manualTags) _normalizeTag(t),
-        normalized,
-      }.toList()
-        ..sort();
+      final tagRepo = ref.read(tagDictionaryRepositoryProvider);
+      final canonical = await tagRepo.resolveToCanonical(tag ?? '');
+      if (canonical.isEmpty) return;
+      final existing = await tagRepo.resolveAll(note.manualTags);
+      final next = <String>{...existing, canonical}.toList()..sort();
       await ref.read(noteRepositoryProvider).setManualTags(note.uuid, next);
+      await tagRepo.recordUsage(canonical);
     } finally {
       controller.dispose();
     }
   }
 
   Future<void> _removeManualTag(Note note, String tag) async {
-    final target = _normalizeTag(tag);
-    final next = note.manualTags.map(_normalizeTag).where((t) => t != target).toList()
-      ..sort();
+    final tagRepo = ref.read(tagDictionaryRepositoryProvider);
+    final target = await tagRepo.resolveToCanonical(tag);
+    final existing = await tagRepo.resolveAll(note.manualTags);
+    final next = existing.where((t) => t != target).toList()..sort();
     await ref.read(noteRepositoryProvider).setManualTags(note.uuid, next);
   }
 
   Future<void> _applyAutoTag(Note note, String tag) async {
-    final normalized = _normalizeTag(tag);
-    if (normalized.isEmpty) return;
-    final next = <String>{
-      for (final t in note.autoTags) _normalizeTag(t),
-      normalized,
-    }.toList()
-      ..sort();
+    final tagRepo = ref.read(tagDictionaryRepositoryProvider);
+    final canonical = await tagRepo.resolveToCanonical(tag);
+    if (canonical.isEmpty) return;
+    final existing = await tagRepo.resolveAll(note.autoTags);
+    final next = <String>{...existing, canonical}.toList()..sort();
     await ref.read(noteRepositoryProvider).setAutoTags(note.uuid, next);
+    await tagRepo.recordUsage(canonical);
     if (!mounted) return;
     setState(() {
-      _aiSuggestedTags = _aiSuggestedTags.where((t) => _normalizeTag(t) != normalized).toList();
+      _aiSuggestedTags = _aiSuggestedTags
+          .where((t) => _normalizeTag(t) != canonical)
+          .toList();
     });
   }
 
   Future<void> _removeAutoTag(Note note, String tag) async {
-    final target = _normalizeTag(tag);
-    final next = note.autoTags.map(_normalizeTag).where((t) => t != target).toList()
-      ..sort();
+    final tagRepo = ref.read(tagDictionaryRepositoryProvider);
+    final target = await tagRepo.resolveToCanonical(tag);
+    final existing = await tagRepo.resolveAll(note.autoTags);
+    final next = existing.where((t) => t != target).toList()..sort();
     await ref.read(noteRepositoryProvider).setAutoTags(note.uuid, next);
   }
 
@@ -331,21 +334,39 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     try {
       final settings = ref.read(appSettingsProvider);
       final ai = ref.read(aiServiceProvider);
+      final tagRepo = ref.read(tagDictionaryRepositoryProvider);
+      final existingCanonical = await tagRepo.resolveAll([
+        ...note.manualTags,
+        ...note.autoTags,
+      ]);
+      final dictionaryCandidates = await tagRepo.buildAiCandidates(
+        text: _controller.text,
+        existingTags: existingCanonical,
+      );
       final tags = await ai.suggestTags(
         text: _controller.text,
-        existingTags: [
-          ...note.manualTags,
-          ...note.autoTags,
-        ],
+        existingTags: existingCanonical,
+        dictionaryTags: dictionaryCandidates,
         useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
         useExternalApi: settings.aiExternalApiEnabled,
       );
       if (!mounted || token != _aiTagSuggestToken) return;
-      setState(() => _aiSuggestedTags = tags);
+      final suggestions = <String>[];
+      for (final tag in tags) {
+        final canonical = await tagRepo.resolveToCanonical(tag);
+        if (canonical.isEmpty) continue;
+        if (existingCanonical.contains(canonical)) continue;
+        if (suggestions.contains(canonical)) continue;
+        suggestions.add(canonical);
+        if (suggestions.length >= 5) break;
+      }
+      if (!mounted || token != _aiTagSuggestToken) return;
+      setState(() => _aiSuggestedTags = suggestions);
     } catch (_) {
       if (!mounted || token != _aiTagSuggestToken) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('AI提案に失敗しました')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('AI提案に失敗しました')));
     } finally {
       if (mounted && token == _aiTagSuggestToken) {
         setState(() => _aiTagSuggesting = false);
@@ -363,26 +384,33 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     final selection = _controller.selection;
     final currentText = _controller.text;
     final hasSelection = selection.isValid && !selection.isCollapsed;
-    final baseOffset = selection.baseOffset >= 0 ? selection.baseOffset : currentText.length;
-    final extentOffset =
-        selection.extentOffset >= 0 ? selection.extentOffset : currentText.length;
+    final baseOffset = selection.baseOffset >= 0
+        ? selection.baseOffset
+        : currentText.length;
+    final extentOffset = selection.extentOffset >= 0
+        ? selection.extentOffset
+        : currentText.length;
     final start = hasSelection
         ? (baseOffset < extentOffset ? baseOffset : extentOffset)
         : baseOffset;
     final end = hasSelection
         ? (baseOffset < extentOffset ? extentOffset : baseOffset)
         : extentOffset;
-    final isFullSelection = hasSelection && start == 0 && end == currentText.length;
+    final isFullSelection =
+        hasSelection && start == 0 && end == currentText.length;
     final autoScope = preset != null
-        ? (hasSelection ? (isFullSelection ? AiEditScope.full : AiEditScope.selection)
-            : AiEditScope.full)
-        : (hasSelection ? (isFullSelection ? AiEditScope.full : AiEditScope.selection)
-            : AiEditScope.cursor);
+        ? (hasSelection
+              ? (isFullSelection ? AiEditScope.full : AiEditScope.selection)
+              : AiEditScope.full)
+        : (hasSelection
+              ? (isFullSelection ? AiEditScope.full : AiEditScope.selection)
+              : AiEditScope.cursor);
     final scope = scopeOverride ?? autoScope;
     if (scope == AiEditScope.selection && !hasSelection) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('選択範囲がありません。')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('選択範囲がありません。')));
       return;
     }
 
@@ -416,10 +444,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
         sendKey: settings.aiPromptSendKey,
         initialPrompt: preset?.prompt,
         autoRun: preset != null,
-        onBusyChanged: (busy) {
-          if (!mounted) return;
-          setState(() => _aiBusy = busy);
-        },
+        onBusyChanged: (_) {},
       ),
     );
     if (result == null) return;
@@ -441,7 +466,9 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
         selection: TextSelection.collapsed(offset: insertAt + result.length),
       );
     }
-    ref.read(quickMemoControllerProvider.notifier).updateContent(_controller.text);
+    ref
+        .read(quickMemoControllerProvider.notifier)
+        .updateContent(_controller.text);
   }
 
   Future<void> _showDraftActionSheet() async {
@@ -489,7 +516,9 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       case _DraftAction.edit:
         FocusScope.of(context).requestFocus(_focusNode);
       case _DraftAction.discard:
-        await ref.read(quickMemoControllerProvider.notifier).discardCurrentDraft();
+        await ref
+            .read(quickMemoControllerProvider.notifier)
+            .discardCurrentDraft();
         if (!mounted) return;
         FocusScope.of(context).requestFocus(_focusNode);
     }
@@ -505,9 +534,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     final draftNote = draftNoteAsync.valueOrNull;
 
     if (!state.loaded) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     if (_lastLoaded != state.content && _controller.text == _lastLoaded) {
@@ -533,7 +560,8 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       });
     }
 
-    final hasTagBar = (draftNote?.manualTags.isNotEmpty ?? false) ||
+    final hasTagBar =
+        (draftNote?.manualTags.isNotEmpty ?? false) ||
         (draftNote?.autoTags.isNotEmpty ?? false) ||
         _aiSuggestedTags.isNotEmpty ||
         _aiTagSuggesting;
@@ -581,8 +609,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
               ToolbarAction(
                 id: 'ai_tag_suggest',
                 builder: (context) => Tooltip(
-                  message:
-                      settings.aiEnabled ? 'AIでタグ提案' : 'AI編集は設定で有効化してください',
+                  message: settings.aiEnabled ? 'AIでタグ提案' : 'AI編集は設定で有効化してください',
                   child: IconButton(
                     onPressed: settings.aiEnabled && !_aiTagSuggesting
                         ? () async {
@@ -600,18 +627,16 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                 builder: (context) => Tooltip(
                   message: settings.aiEnabled ? 'AI編集' : 'AI編集は設定で有効化してください',
                   child: IconButton(
-                    onPressed:
-                        settings.aiEnabled ? () => _openAiEditDialog() : null,
+                    onPressed: settings.aiEnabled
+                        ? () => _openAiEditDialog()
+                        : null,
                     icon: const Icon(Icons.auto_fix_high),
                   ),
                 ),
               ),
             ],
           ),
-          TextButton(
-            onPressed: _save,
-            child: const Text('保存'),
-          ),
+          TextButton(onPressed: _save, child: const Text('保存')),
         ],
       ),
       body: Padding(
@@ -636,8 +661,9 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                       for (final tag in draftNote.autoTags)
                         InputChip(
                           label: Text('#${_normalizeTag(tag)}'),
-                          backgroundColor:
-                              Theme.of(context).colorScheme.secondaryContainer,
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.secondaryContainer,
                           onDeleted: () => _removeAutoTag(draftNote, tag),
                         ),
                     if (draftNote != null)
@@ -657,8 +683,6 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                     focusNode: _focusNode,
                     maxLines: null,
                     expands: true,
-                    readOnly: _aiBusy || _inlineBusy,
-                    enableInteractiveSelection: !(_aiBusy || _inlineBusy),
                     textAlign: TextAlign.left,
                     textAlignVertical: TextAlignVertical.top,
                     decoration: appInputDecoration(hintText: 'クイックメモを書く…'),
@@ -682,13 +706,11 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                               : '';
                           return Text(
                             '$count$suffix',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
+                            style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
                                 ),
                           );
                         },

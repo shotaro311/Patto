@@ -7,11 +7,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/note.dart';
 import '../../domain/app_settings.dart';
+import '../../data/repositories/tag_dictionary_repository.dart';
 import '../providers/ai_providers.dart';
 import '../providers/app_settings_controller.dart';
 import '../providers/note_repository_provider.dart';
 import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
+import '../providers/tag_dictionary_repository_provider.dart';
 import '../widgets/app_input_decoration.dart';
 import '../widgets/animated_dots_text.dart';
 import '../widgets/ai_prompt_presets_hover_menu.dart';
@@ -28,10 +30,11 @@ class NoteEditorPane extends ConsumerStatefulWidget {
 }
 
 class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
-  static final RegExp _symbolPattern =
-      RegExp(r'[\p{P}\p{S}]', unicode: true);
-  static final RegExp _hashTagPattern =
-      RegExp(r'(?<!\w)#([\p{L}\p{N}_-]+)', unicode: true);
+  static final RegExp _symbolPattern = RegExp(r'[\p{P}\p{S}]', unicode: true);
+  static final RegExp _hashTagPattern = RegExp(
+    r'(?<!\w)#([\p{L}\p{N}_-]+)',
+    unicode: true,
+  );
   static final RegExp _wikiLinkPattern = RegExp(r'\[\[([^\]]+)\]\]');
   static final RegExp _urlPattern = RegExp(r'https?://[^\s)>\"]+');
   final _focusNode = FocusNode();
@@ -86,10 +89,12 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     final selection = _controller.selection;
     final currentText = _controller.text;
     final hasSelection = selection.isValid && !selection.isCollapsed;
-    final baseOffset =
-        selection.baseOffset >= 0 ? selection.baseOffset : currentText.length;
-    final extentOffset =
-        selection.extentOffset >= 0 ? selection.extentOffset : currentText.length;
+    final baseOffset = selection.baseOffset >= 0
+        ? selection.baseOffset
+        : currentText.length;
+    final extentOffset = selection.extentOffset >= 0
+        ? selection.extentOffset
+        : currentText.length;
     final start = hasSelection
         ? (baseOffset < extentOffset ? baseOffset : extentOffset)
         : baseOffset;
@@ -130,10 +135,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     }
   }
 
-  Future<void> _runInlineAiEdit(
-    AiPromptPreset preset,
-    int index,
-  ) async {
+  Future<void> _runInlineAiEdit(AiPromptPreset preset, int index) async {
     if (_inlineBusy) return;
     final target = _buildTargetForScope(_promptScope);
     if (target == null) return;
@@ -198,8 +200,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     _controller = TextEditingController();
     _titleController = TextEditingController();
 
-    _quickLaunchSub =
-        ref.listenManual<int>(quickLaunchEventProvider, (previous, next) {
+    _quickLaunchSub = ref.listenManual<int>(quickLaunchEventProvider, (
+      previous,
+      next,
+    ) {
       _markFocusPending(delay: const Duration(milliseconds: 80));
     });
 
@@ -294,9 +298,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   }
 
   String _normalizeTag(String value) {
-    final trimmed = value.trim();
-    if (trimmed.isEmpty) return '';
-    return trimmed.toLowerCase();
+    return TagDictionaryRepository.normalizeTag(value);
   }
 
   Future<void> _addManualTag(Note note) async {
@@ -327,44 +329,50 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
           );
         },
       );
-      final normalized = _normalizeTag(tag ?? '');
-      if (normalized.isEmpty) return;
-      final next = <String>{
-        for (final t in note.manualTags) _normalizeTag(t),
-        normalized,
-      }.toList()
-        ..sort();
+      final tagRepo = ref.read(tagDictionaryRepositoryProvider);
+      final canonical = await tagRepo.resolveToCanonical(tag ?? '');
+      if (canonical.isEmpty) return;
+      final existing = await tagRepo.resolveAll(note.manualTags);
+      final next = <String>{...existing, canonical}.toList()..sort();
       final repo = ref.read(noteRepositoryProvider);
       await repo.setManualTags(note.uuid, next);
+      await tagRepo.recordUsage(canonical);
     } finally {
       controller.dispose();
     }
   }
 
   Future<void> _removeManualTag(Note note, String tag) async {
-    final target = _normalizeTag(tag);
-    final next = note.manualTags.map(_normalizeTag).where((t) => t != target).toList()
-      ..sort();
+    final tagRepo = ref.read(tagDictionaryRepositoryProvider);
+    final target = await tagRepo.resolveToCanonical(tag);
+    final existing = await tagRepo.resolveAll(note.manualTags);
+    final next = existing.where((t) => t != target).toList()..sort();
     final repo = ref.read(noteRepositoryProvider);
     await repo.setManualTags(note.uuid, next);
   }
 
   Future<void> _applyAutoTag(Note note, String tag) async {
-    final normalized = _normalizeTag(tag);
-    if (normalized.isEmpty) return;
-    final next = <String>{
-      for (final t in note.autoTags) _normalizeTag(t),
-      normalized,
-    }.toList()
-      ..sort();
+    final tagRepo = ref.read(tagDictionaryRepositoryProvider);
+    final canonical = await tagRepo.resolveToCanonical(tag);
+    if (canonical.isEmpty) return;
+    final existing = await tagRepo.resolveAll(note.autoTags);
+    final next = <String>{...existing, canonical}.toList()..sort();
     final repo = ref.read(noteRepositoryProvider);
     await repo.setAutoTags(note.uuid, next);
+    await tagRepo.recordUsage(canonical);
+    if (!mounted) return;
+    setState(() {
+      _aiSuggestedTags = _aiSuggestedTags
+          .where((t) => _normalizeTag(t) != canonical)
+          .toList();
+    });
   }
 
   Future<void> _removeAutoTag(Note note, String tag) async {
-    final target = _normalizeTag(tag);
-    final next = note.autoTags.map(_normalizeTag).where((t) => t != target).toList()
-      ..sort();
+    final tagRepo = ref.read(tagDictionaryRepositoryProvider);
+    final target = await tagRepo.resolveToCanonical(tag);
+    final existing = await tagRepo.resolveAll(note.autoTags);
+    final next = existing.where((t) => t != target).toList()..sort();
     final repo = ref.read(noteRepositoryProvider);
     await repo.setAutoTags(note.uuid, next);
   }
@@ -379,17 +387,34 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     try {
       final settings = ref.read(appSettingsProvider);
       final ai = ref.read(aiServiceProvider);
+      final tagRepo = ref.read(tagDictionaryRepositoryProvider);
+      final existingCanonical = await tagRepo.resolveAll([
+        ...note.manualTags,
+        ...note.autoTags,
+      ]);
+      final dictionaryCandidates = await tagRepo.buildAiCandidates(
+        text: _controller.text,
+        existingTags: existingCanonical,
+      );
       final tags = await ai.suggestTags(
         text: _controller.text,
-        existingTags: [
-          ...note.manualTags,
-          ...note.autoTags,
-        ],
+        existingTags: existingCanonical,
+        dictionaryTags: dictionaryCandidates,
         useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
         useExternalApi: settings.aiExternalApiEnabled,
       );
       if (!mounted || token != _aiTagSuggestToken) return;
-      setState(() => _aiSuggestedTags = tags);
+      final suggestions = <String>[];
+      for (final tag in tags) {
+        final canonical = await tagRepo.resolveToCanonical(tag);
+        if (canonical.isEmpty) continue;
+        if (existingCanonical.contains(canonical)) continue;
+        if (suggestions.contains(canonical)) continue;
+        suggestions.add(canonical);
+        if (suggestions.length >= 5) break;
+      }
+      if (!mounted || token != _aiTagSuggestToken) return;
+      setState(() => _aiSuggestedTags = suggestions);
     } catch (_) {
       if (!mounted || token != _aiTagSuggestToken) return;
       showTopRightToast(context, 'AI提案に失敗しました。');
@@ -430,14 +455,16 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
 
     if (next.isNotEmpty) {
       final repo = ref.read(noteRepositoryProvider);
-      final duplicated =
-          await repo.isTitleDuplicate(title: next, excludeId: note.uuid);
+      final duplicated = await repo.isTitleDuplicate(
+        title: next,
+        excludeId: note.uuid,
+      );
       if (duplicated) {
         if (mounted && _lastDuplicateTitle != next) {
           _lastDuplicateTitle = next;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('同じタイトルのメモが既にあります')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('同じタイトルのメモが既にあります')));
         }
         if (exitOnSuccess && mounted) {
           FocusScope.of(context).requestFocus(_titleFocusNode);
@@ -463,9 +490,12 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     final selection = _controller.selection;
     final currentText = _controller.text;
     final hasSelection = selection.isValid && !selection.isCollapsed;
-    final baseOffset = selection.baseOffset >= 0 ? selection.baseOffset : currentText.length;
-    final extentOffset =
-        selection.extentOffset >= 0 ? selection.extentOffset : currentText.length;
+    final baseOffset = selection.baseOffset >= 0
+        ? selection.baseOffset
+        : currentText.length;
+    final extentOffset = selection.extentOffset >= 0
+        ? selection.extentOffset
+        : currentText.length;
     final start = hasSelection
         ? (baseOffset < extentOffset ? baseOffset : extentOffset)
         : baseOffset;
@@ -473,12 +503,17 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
         ? (baseOffset < extentOffset ? extentOffset : baseOffset)
         : extentOffset;
     final isFullSelection =
-        hasSelection && start == 0 && end == currentText.length && fromContextMenu;
+        hasSelection &&
+        start == 0 &&
+        end == currentText.length &&
+        fromContextMenu;
     final autoScope = preset != null
-        ? (hasSelection ? (isFullSelection ? AiEditScope.full : AiEditScope.selection)
-            : AiEditScope.full)
-        : (hasSelection ? (isFullSelection ? AiEditScope.full : AiEditScope.selection)
-            : AiEditScope.cursor);
+        ? (hasSelection
+              ? (isFullSelection ? AiEditScope.full : AiEditScope.selection)
+              : AiEditScope.full)
+        : (hasSelection
+              ? (isFullSelection ? AiEditScope.full : AiEditScope.selection)
+              : AiEditScope.full);
     final scope = scopeOverride ?? autoScope;
     if (scope == AiEditScope.selection && !hasSelection) {
       showTopRightToast(context, '選択範囲がありません。');
@@ -575,8 +610,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
         onPressed: settings.aiEnabled
             ? () {
                 editableTextState.hideToolbar();
-                  _openAiEditDialog(fromContextMenu: true);
-                }
+                _openAiEditDialog(fromContextMenu: true);
+              }
             : null,
       ),
       for (final preset in presets)
@@ -585,10 +620,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
           onPressed: settings.aiEnabled
               ? () {
                   editableTextState.hideToolbar();
-                  _openAiEditDialog(
-                    preset: preset,
-                    fromContextMenu: true,
-                  );
+                  _openAiEditDialog(preset: preset, fromContextMenu: true);
                 }
               : null,
         ),
@@ -651,7 +683,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
           suggestions.add(normalized);
         }
 
-        final hasTagBar = note.manualTags.isNotEmpty ||
+        final hasTagBar =
+            note.manualTags.isNotEmpty ||
             note.autoTags.isNotEmpty ||
             suggestions.isNotEmpty ||
             _aiTagSuggesting;
@@ -661,7 +694,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
             Material(
               color: Theme.of(context).colorScheme.surface,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -686,20 +722,25 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                     setState(() => _editingTitle = true);
                                     WidgetsBinding.instance
                                         .addPostFrameCallback((_) {
-                                      if (!mounted) return;
-                                      _titleController.selection = TextSelection(
-                                        baseOffset: 0,
-                                        extentOffset: _titleController.text.length,
-                                      );
-                                      FocusScope.of(context)
-                                          .requestFocus(_titleFocusNode);
-                                    });
+                                          if (!mounted) return;
+                                          _titleController
+                                              .selection = TextSelection(
+                                            baseOffset: 0,
+                                            extentOffset:
+                                                _titleController.text.length,
+                                          );
+                                          FocusScope.of(
+                                            context,
+                                          ).requestFocus(_titleFocusNode);
+                                        });
                                   },
                                   child: Text(
                                     display,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(context).textTheme.titleMedium,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleMedium,
                                   ),
                                 ),
                         ),
@@ -713,7 +754,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                 runningIndex: _runningPresetIndex,
                                 onCancelRunning: _cancelInlineAiEdit,
                                 closeOnSelect: settings.aiPreviewEnabled,
-                                keepOpenWhileRunning: !settings.aiPreviewEnabled,
+                                keepOpenWhileRunning:
+                                    !settings.aiPreviewEnabled,
                                 onSelect: (preset, index) {
                                   if (!settings.aiEnabled) return;
                                   if (settings.aiPreviewEnabled) {
@@ -744,8 +786,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                 child: IconButton(
                                   onPressed:
                                       settings.aiEnabled && !_aiTagSuggesting
-                                          ? () => _runAiTagSuggest(note)
-                                          : null,
+                                      ? () => _runAiTagSuggest(note)
+                                      : null,
                                   icon: const Icon(Icons.auto_awesome),
                                 ),
                               ),
@@ -783,9 +825,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                         runSpacing: 6,
                         children: [
                           if (_aiTagSuggesting)
-                            const Chip(
-                              label: Text('AI提案中…'),
-                            ),
+                            const Chip(label: Text('AI提案中…')),
                           for (final tag in note.manualTags)
                             InputChip(
                               label: Text('#${_normalizeTag(tag)}'),
@@ -794,9 +834,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                           for (final tag in note.autoTags)
                             InputChip(
                               label: Text('#${_normalizeTag(tag)}'),
-                              backgroundColor: Theme.of(context)
-                                  .colorScheme
-                                  .secondaryContainer,
+                              backgroundColor: Theme.of(
+                                context,
+                              ).colorScheme.secondaryContainer,
                               onDeleted: () => _removeAutoTag(note, tag),
                             ),
                           for (final tag in suggestions)
@@ -822,7 +862,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                         if (!settings.aiEnabled) {
                           return KeyEventResult.ignored;
                         }
-                        if (_matchesAiShortcut(event, settings.aiEditKeyBinding)) {
+                        if (_matchesAiShortcut(
+                          event,
+                          settings.aiEditKeyBinding,
+                        )) {
                           _openAiEditDialog();
                           return KeyEventResult.handled;
                         }
@@ -833,8 +876,6 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                         focusNode: _focusNode,
                         maxLines: null,
                         expands: true,
-                        readOnly: _aiBusy || _inlineBusy,
-                        enableInteractiveSelection: !(_aiBusy || _inlineBusy),
                         textAlign: TextAlign.left,
                         textAlignVertical: TextAlignVertical.top,
                         decoration: appInputDecoration(hintText: 'メモを書く…'),
@@ -889,13 +930,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                 : '';
                             return Text(
                               '$count$suffix',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
+                              style: Theme.of(context).textTheme.bodySmall
                                   ?.copyWith(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
                                   ),
                             );
                           },
@@ -1161,10 +1200,7 @@ class _AiEditDialogState extends ConsumerState<AiEditDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: _cancel,
-          child: const Text('キャンセル'),
-        ),
+        TextButton(onPressed: _cancel, child: const Text('キャンセル')),
         if (widget.previewEnabled)
           FilledButton(
             onPressed: _hasResult && !_running ? _apply : null,
@@ -1181,11 +1217,11 @@ class _AiEditDialogState extends ConsumerState<AiEditDialog> {
 
     final diff = _diffResult ?? _buildDiff(widget.targetText, _currentResult);
     final leftStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        );
-    final rightStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
-          color: const Color(0xFF00C853),
-        );
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+    final rightStyle = Theme.of(
+      context,
+    ).textTheme.bodyMedium?.copyWith(color: const Color(0xFF00C853));
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1203,16 +1239,16 @@ class _AiEditDialogState extends ConsumerState<AiEditDialog> {
                 spans: _buildDiffSpans(
                   diff.original,
                   leftStyle,
-                  Theme.of(context)
-                      .colorScheme
-                      .surfaceContainerHighest
-                      .withValues(alpha: 0.6),
+                  Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
                 ),
               ),
             ),
             GestureDetector(
               onHorizontalDragUpdate: (details) {
-                final next = _splitRatio +
+                final next =
+                    _splitRatio +
                     (details.delta.dx / (totalWidth - dividerWidth));
                 setState(() => _splitRatio = next.clamp(0.2, 0.8));
               },
@@ -1237,9 +1273,7 @@ class _AiEditDialogState extends ConsumerState<AiEditDialog> {
     );
   }
 
-  Widget _buildDiffPane({
-    required List<InlineSpan> spans,
-  }) {
+  Widget _buildDiffPane({required List<InlineSpan> spans}) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1269,10 +1303,12 @@ class _AiEditDialogState extends ConsumerState<AiEditDialog> {
   }
 
   _DiffResult _buildDiff(String original, String modified) {
-    final originalChars =
-        original.runes.map((r) => String.fromCharCode(r)).toList();
-    final modifiedChars =
-        modified.runes.map((r) => String.fromCharCode(r)).toList();
+    final originalChars = original.runes
+        .map((r) => String.fromCharCode(r))
+        .toList();
+    final modifiedChars = modified.runes
+        .map((r) => String.fromCharCode(r))
+        .toList();
     const maxCells = 20000;
     if (originalChars.length * modifiedChars.length > maxCells) {
       return _DiffResult(
@@ -1290,9 +1326,7 @@ class _AiEditDialogState extends ConsumerState<AiEditDialog> {
         if (originalChars[i - 1] == modifiedChars[j - 1]) {
           dp[i][j] = dp[i - 1][j - 1] + 1;
         } else {
-          dp[i][j] = dp[i - 1][j] >= dp[i][j - 1]
-              ? dp[i - 1][j]
-              : dp[i][j - 1];
+          dp[i][j] = dp[i - 1][j] >= dp[i][j - 1] ? dp[i - 1][j] : dp[i][j - 1];
         }
       }
     }
@@ -1301,14 +1335,11 @@ class _AiEditDialogState extends ConsumerState<AiEditDialog> {
     var i = originalChars.length;
     var j = modifiedChars.length;
     while (i > 0 || j > 0) {
-      if (i > 0 &&
-          j > 0 &&
-          originalChars[i - 1] == modifiedChars[j - 1]) {
+      if (i > 0 && j > 0 && originalChars[i - 1] == modifiedChars[j - 1]) {
         ops.add(_DiffOp(_DiffOpType.equal, originalChars[i - 1]));
         i--;
         j--;
-      } else if (j > 0 &&
-          (i == 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      } else if (j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j])) {
         ops.add(_DiffOp(_DiffOpType.insert, modifiedChars[j - 1]));
         j--;
       } else if (i > 0) {
@@ -1321,11 +1352,7 @@ class _AiEditDialogState extends ConsumerState<AiEditDialog> {
     final originalSegments = <_DiffSegment>[];
     final modifiedSegments = <_DiffSegment>[];
 
-    void appendSegment(
-      List<_DiffSegment> list,
-      String text,
-      bool changed,
-    ) {
+    void appendSegment(List<_DiffSegment> list, String text, bool changed) {
       if (text.isEmpty) return;
       if (list.isNotEmpty && list.last.changed == changed) {
         final last = list.removeLast();
@@ -1337,31 +1364,25 @@ class _AiEditDialogState extends ConsumerState<AiEditDialog> {
 
     for (final op in orderedOps) {
       switch (op.type) {
-      case _DiffOpType.equal:
-        appendSegment(originalSegments, op.text, false);
-        appendSegment(modifiedSegments, op.text, false);
-        break;
-      case _DiffOpType.delete:
-        appendSegment(originalSegments, op.text, true);
-        break;
-      case _DiffOpType.insert:
-        appendSegment(modifiedSegments, op.text, true);
-        break;
+        case _DiffOpType.equal:
+          appendSegment(originalSegments, op.text, false);
+          appendSegment(modifiedSegments, op.text, false);
+          break;
+        case _DiffOpType.delete:
+          appendSegment(originalSegments, op.text, true);
+          break;
+        case _DiffOpType.insert:
+          appendSegment(modifiedSegments, op.text, true);
+          break;
       }
     }
 
-    return _DiffResult(
-      original: originalSegments,
-      modified: modifiedSegments,
-    );
+    return _DiffResult(original: originalSegments, modified: modifiedSegments);
   }
 }
 
 class _DiffResult {
-  const _DiffResult({
-    required this.original,
-    required this.modified,
-  });
+  const _DiffResult({required this.original, required this.modified});
 
   final List<_DiffSegment> original;
   final List<_DiffSegment> modified;
