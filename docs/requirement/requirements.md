@@ -40,6 +40,14 @@ macOS / iOS を中心に、パッと起動してすぐ入力できる軽量メ�
 | F-006 | Markdown入力 | Markdown記法の入力に対応（プレビューなし） | 必須 |
 | F-007 | タイトル編集 | タイトルを手動編集できる（重複時はエラー） | 必須 |
 
+#### 2.1.5 タグ/リンクによる自動整理
+| ID | 機能 | 説明 | 優先度 |
+|----|------|------|--------|
+| F-040 | タグ（手動） | メモに手動でタグを付けられる（`manualTags`） | 必須 |
+| F-041 | タグ（自動・提案） | AI等でタグ候補（`autoTags`）を生成し、**タグ辞書を参照して既存タグを優先**しつつ**最大5件を提案として提示**（確認して適用／新規タグは選択時に辞書登録） | 必須 |
+| F-042 | リンク | `[[リンク]]`等でメモ同士を関連付けできる（リンク一覧/参照元の表示はMVP内で最小） | 必須 |
+| F-043 | タグ辞書管理 | タグ辞書を一覧表示し、各タグの使用件数を表示、タグ名の変更／削除ができる（Supabaseで同期対象） | 必須 |
+
 #### 2.1.2 同期機能
 | ID | 機能 | 説明 | 優先度 |
 |----|------|------|--------|
@@ -55,7 +63,7 @@ macOS / iOS を中心に、パッと起動してすぐ入力できる軽量メ�
 |----|------|------|--------|
 | F-020 | AI文章編集 | 選択テキストまたはメモ全体を、ユーザーの指示に従って書き換え | 必須 |
 | F-021 | 編集結果の適用 | 生成結果を確認し、「適用（置換）/追記/キャンセル」を選べる | 必須 |
-| F-022 | AI利用設定 | AIの利用可否、送信される内容の注意表示、ユーザーAPIキー登録（端末内に保存） | 必須 |
+| F-022 | AI利用設定 | Apple Intelligenceの利用ON/OFF（非対応時は警告）、外部AI APIのON/OFF（APIキー登録含む）、フォールバック設定、送信内容の注意表示、カスタムプロンプト（最大6）の編集、ツールバーアイコン順の並び替え（Cmd+ドラッグ、端末内保存） | 必須 |
 
 #### 2.1.4 ショートカット機能
 | ID | 機能 | 説明 | 優先度 |
@@ -64,7 +72,8 @@ macOS / iOS を中心に、パッと起動してすぐ入力できる軽量メ�
 | F-031 | ショートカット設定 | 使用する装飾キー（Cmd, Ctrl, Alt, Shift等）の選択 | 必須 |
 | F-032 | （iOS）クイック起動 | ウィジェット（iOS 16+）/ロック画面コントロール（iOS 18+）から起動し、入力欄へフォーカス | 必須 |
 | F-033 | クイック起動の挙動設定 | 「新規メモを開く / 前回メモを開く」を設定で選べる | 必須 |
-| F-034 | クイックメモ | 「新規メモ」設定時は未保存の下書きを1件だけ開き、保存時に初めてメモとして登録 | 必須 |
+| F-034 | クイックメモ | 「新規メモ」設定時はクイックメモ（下書き）を開き、入力を自動保存する。下書きは常に1件のみ保持する。保存（整理/確定）時に通常メモとして扱い、クイックメモは空に戻る。下書きがある場合、ホームに「下書き」導線を表示し、「＋」押下時に保存/編集/破棄を選べる | 必須 |
+※ Mac App Store配布前提のため、他アプリの選択テキスト反映/非表示時コピーは対象外
 
 ### 2.2 将来機能（MVP後）
 
@@ -74,7 +83,6 @@ macOS / iOS を中心に、パッと起動してすぐ入力できる軽量メ�
 | F-105 | AI要約 | メモ全体または選択テキストの要約 |
 | F-106 | AI校正 | 文法・誤字脱字などの修正提案 |
 | F-107 | AI翻訳 | 選択テキストの翻訳 |
-| F-101 | タグ機能 | メモへのタグ付けと絞り込み |
 | F-102 | フォルダ機能 | メモの階層的な整理 |
 | F-103 | 共有機能 | 他ユーザーとのメモ共有 |
 | F-104 | エクスポート | Markdown/PDF/テキスト形式でのエクスポート |
@@ -135,8 +143,8 @@ macOS / iOS を中心に、パッと起動してすぐ入力できる軽量メ�
 ### 4.3 AI
 | 項目 | 技術 | 理由 |
 |------|------|------|
-| AIモデル | TBD（Gemini等） | 文章編集を低遅延で実行 |
-| SDK | google_generative_ai（候補） | ユーザーAPIキーで文章編集を実行 |
+| AIモデル | Apple Intelligence（Foundation Models）＋外部API（Gemini等） | ローカル優先＋非対応時のフォールバック |
+| SDK | FoundationModels（macOS）＋google_generative_ai | Apple Intelligence優先、外部APIは任意でON |
 
 ### 4.4 主要パッケージ
 ```yaml
@@ -252,10 +260,38 @@ CREATE INDEX idx_notes_updated ON public.notes(server_updated_at);
 CREATE INDEX idx_notes_sync ON public.notes(user_id, server_updated_at);
 ```
 
+#### tag_dictionary
+```sql
+CREATE TABLE public.tag_dictionary (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  canonical_tag TEXT NOT NULL,
+  aliases TEXT[] NOT NULL DEFAULT '{}',
+  use_count INTEGER NOT NULL DEFAULT 0,
+  last_used_at TIMESTAMPTZ,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  local_updated_at TIMESTAMPTZ NOT NULL,
+  server_updated_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+
+  sync_version INTEGER DEFAULT 1,
+  client_id TEXT
+);
+
+CREATE INDEX idx_tag_dictionary_user_id ON public.tag_dictionary(user_id);
+CREATE INDEX idx_tag_dictionary_updated ON public.tag_dictionary(server_updated_at);
+CREATE INDEX idx_tag_dictionary_sync ON public.tag_dictionary(user_id, server_updated_at);
+
+-- upsert(onConflict: user_id,canonical_tag) と整合する一意制約
+CREATE UNIQUE INDEX ux_tag_dictionary_user_canonical
+  ON public.tag_dictionary(user_id, canonical_tag);
+```
+
 ### 6.2 Row Level Security (RLS)
 ```sql
 -- notes テーブルのRLS
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tag_dictionary ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users can view own notes"
   ON public.notes FOR SELECT
@@ -268,12 +304,25 @@ CREATE POLICY "Users can insert own notes"
 CREATE POLICY "Users can update own notes"
   ON public.notes FOR UPDATE
   USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can view own tag dictionary"
+  ON public.tag_dictionary FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own tag dictionary"
+  ON public.tag_dictionary FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own tag dictionary"
+  ON public.tag_dictionary FOR UPDATE
+  USING (auth.uid() = user_id);
 ```
 
 ### 6.3 リアルタイム同期
 ```sql
 -- リアルタイム通知の有効化
 ALTER PUBLICATION supabase_realtime ADD TABLE public.notes;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.tag_dictionary;
 ```
 
 ---

@@ -5,17 +5,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'domain/app_settings.dart';
+import 'domain/quick_launch_event.dart';
 import 'presentation/providers/app_settings_controller.dart';
 import 'presentation/providers/auto_sync_provider.dart';
 import 'presentation/providers/notes_providers.dart';
 import 'presentation/providers/quick_launch_provider.dart';
 import 'presentation/providers/quick_memo_provider.dart';
 import 'presentation/providers/shortcut_provider.dart';
+import 'presentation/routes/quick_memo_route_args.dart';
 import 'presentation/screens/note_editor_screen.dart';
 import 'presentation/screens/auth_screen.dart';
 import 'presentation/screens/notes_home_screen.dart';
 import 'presentation/screens/settings_screen.dart';
 import 'presentation/screens/quick_memo_screen.dart';
+import 'presentation/screens/tag_manager_screen.dart';
 
 class PattoApp extends ConsumerStatefulWidget {
   const PattoApp({super.key});
@@ -27,7 +30,7 @@ class PattoApp extends ConsumerStatefulWidget {
 class _PattoAppState extends ConsumerState<PattoApp>
     with WidgetsBindingObserver {
   final _navigatorKey = GlobalKey<NavigatorState>();
-  ProviderSubscription<MacModifierKey>? _macModifierKeySub;
+  ProviderSubscription<AppSettings>? _macShortcutSub;
   ProviderSubscription<AsyncValue<int>>? _dirtyNotesSub;
   late final NavigatorObserver _quickMemoObserver;
 
@@ -42,12 +45,18 @@ class _PattoAppState extends ConsumerState<PattoApp>
     shortcutService.setOnExternalPaste(_handleExternalPaste);
 
     final settings = ref.read(appSettingsProvider);
-    shortcutService.configureMac(modifierKey: settings.macModifierKey);
+    _configureMacShortcuts(settings);
 
-    _macModifierKeySub = ref.listenManual<MacModifierKey>(
-      appSettingsProvider.select((s) => s.macModifierKey),
-      (prev, next) => shortcutService.configureMac(modifierKey: next),
-    );
+    _macShortcutSub = ref.listenManual<AppSettings>(appSettingsProvider, (
+      prev,
+      next,
+    ) {
+      if (prev == null ||
+          prev.macModifierKey != next.macModifierKey ||
+          prev.macShowHideKeyBinding != next.macShowHideKeyBinding) {
+        _configureMacShortcuts(next);
+      }
+    });
 
     final autoSync = ref.read(autoSyncControllerProvider);
     _dirtyNotesSub = ref.listenManual<AsyncValue<int>>(
@@ -64,7 +73,7 @@ class _PattoAppState extends ConsumerState<PattoApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _macModifierKeySub?.close();
+    _macShortcutSub?.close();
     _dirtyNotesSub?.close();
     super.dispose();
   }
@@ -86,26 +95,48 @@ class _PattoAppState extends ConsumerState<PattoApp>
     ref.read(externalPasteEventProvider.notifier).state++;
   }
 
-  Future<void> _handleQuickLaunch(String? source) async {
-    ref.read(quickLaunchSourceProvider.notifier).state = source;
+  void _configureMacShortcuts(AppSettings settings) {
+    final shortcutService = ref.read(shortcutServiceProvider);
+    shortcutService.configureMac(
+      modifierKey: settings.macModifierKey,
+      showHideKeyBinding: settings.macShowHideKeyBinding,
+    );
+  }
+
+  Future<void> _handleQuickLaunch(QuickLaunchEvent event) async {
+    if (event.action == QuickLaunchAction.hide) {
+      return;
+    }
+
+    ref.read(quickLaunchSourceProvider.notifier).state = event.source;
     final settings = ref.read(appSettingsProvider);
     if (Platform.isMacOS &&
-        source == 'macos' &&
+        event.source == 'macos' &&
         settings.quickLaunchOpenMode == QuickLaunchOpenMode.lastNote) {
       ref.read(quickLaunchEventProvider.notifier).state++;
       return;
     }
     switch (settings.quickLaunchOpenMode) {
       case QuickLaunchOpenMode.newNote:
-        ref.read(quickMemoControllerProvider);
         if (ref.read(quickMemoOpenProvider)) {
           ref.read(quickLaunchEventProvider.notifier).state++;
           return;
         }
         ref.read(quickMemoOpenProvider.notifier).state = true;
         final useMorph =
-            source == 'ios_control' && !Platform.isMacOS && Platform.isIOS;
-        _navigatorKey.currentState?.push(_buildQuickMemoRoute(useMorph: useMorph));
+            event.source == 'ios_control' &&
+            !Platform.isMacOS &&
+            Platform.isIOS;
+        _navigatorKey.currentState?.push(
+          _buildQuickMemoRoute(
+            useMorph: useMorph,
+            showDraftActionSheetOnOpen: false,
+            routeSettings: RouteSettings(
+              name: '/quick-memo',
+              arguments: QuickMemoRouteArgs(useMorph: useMorph),
+            ),
+          ),
+        );
         ref.read(quickLaunchEventProvider.notifier).state++;
         return;
       case QuickLaunchOpenMode.lastNote:
@@ -132,41 +163,53 @@ class _PattoAppState extends ConsumerState<PattoApp>
     }
   }
 
-  Route<void> _buildQuickMemoRoute({bool useMorph = false}) {
+  Route<void> _buildQuickMemoRoute({
+    required bool useMorph,
+    required bool showDraftActionSheetOnOpen,
+    RouteSettings? routeSettings,
+  }) {
+    final settings =
+        routeSettings ??
+        const RouteSettings(
+          name: '/quick-memo',
+          arguments: QuickMemoRouteArgs(),
+        );
     if (useMorph) {
       return PageRouteBuilder(
-        settings: const RouteSettings(name: '/quick-memo'),
+        settings: settings,
         transitionDuration: const Duration(milliseconds: 360),
         reverseTransitionDuration: const Duration(milliseconds: 220),
         pageBuilder: (context, animation, secondaryAnimation) =>
-            const QuickMemoScreen(),
+            QuickMemoScreen(
+              showDraftActionSheetOnOpen: showDraftActionSheetOnOpen,
+            ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           final curve = CurvedAnimation(
             parent: animation,
             curve: Curves.easeOutCubic,
             reverseCurve: Curves.easeInCubic,
           );
-          return _QuickMemoMorphTransition(
-            animation: curve,
-            child: child,
-          );
+          return _QuickMemoMorphTransition(animation: curve, child: child);
         },
       );
     }
     return PageRouteBuilder(
-      settings: const RouteSettings(name: '/quick-memo'),
+      settings: settings,
       transitionDuration: const Duration(milliseconds: 220),
       reverseTransitionDuration: const Duration(milliseconds: 180),
-      pageBuilder: (context, animation, secondaryAnimation) =>
-          const QuickMemoScreen(),
+      pageBuilder: (context, animation, secondaryAnimation) => QuickMemoScreen(
+        showDraftActionSheetOnOpen: showDraftActionSheetOnOpen,
+      ),
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
         final curve = CurvedAnimation(
           parent: animation,
           curve: Curves.easeOutCubic,
           reverseCurve: Curves.easeInCubic,
         );
-        final offsetTween =
-            Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero);
+        final offsetTween = Tween<Offset>(
+          begin: const Offset(1, 0),
+          end: Offset.zero,
+        );
         return Stack(
           children: [
             Positioned.fill(
@@ -174,10 +217,7 @@ class _PattoAppState extends ConsumerState<PattoApp>
                 color: Theme.of(context).scaffoldBackgroundColor,
               ),
             ),
-            SlideTransition(
-              position: offsetTween.animate(curve),
-              child: child,
-            ),
+            SlideTransition(position: offsetTween.animate(curve), child: child),
           ],
         );
       },
@@ -194,10 +234,23 @@ class _PattoAppState extends ConsumerState<PattoApp>
       ),
       navigatorKey: _navigatorKey,
       navigatorObservers: [_quickMemoObserver],
+      onGenerateRoute: (settings) {
+        if (settings.name != '/quick-memo') return null;
+        final args = settings.arguments;
+        final casted = args is QuickMemoRouteArgs
+            ? args
+            : const QuickMemoRouteArgs();
+        return _buildQuickMemoRoute(
+          useMorph: casted.useMorph,
+          showDraftActionSheetOnOpen: casted.showDraftActionSheetOnOpen,
+          routeSettings: settings,
+        );
+      },
       routes: {
         '/': (_) => const NotesHomeScreen(),
         '/settings': (_) => const SettingsScreen(),
         '/auth': (_) => const AuthScreen(),
+        '/tags': (_) => const TagManagerScreen(),
       },
     );
   }
@@ -225,9 +278,7 @@ class _QuickMemoMorphTransition extends StatelessWidget {
     return Stack(
       children: [
         Positioned.fill(
-          child: ColoredBox(
-            color: Theme.of(context).scaffoldBackgroundColor,
-          ),
+          child: ColoredBox(color: Theme.of(context).scaffoldBackgroundColor),
         ),
         Align(
           alignment: Alignment.topCenter,

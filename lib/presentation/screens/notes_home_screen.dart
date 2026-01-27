@@ -5,6 +5,8 @@ import '../../data/models/note.dart';
 import '../providers/app_settings_controller.dart';
 import '../providers/note_repository_provider.dart';
 import '../providers/notes_providers.dart';
+import '../providers/quick_memo_provider.dart';
+import '../routes/quick_memo_route_args.dart';
 import '../widgets/app_input_decoration.dart';
 import 'note_editor_pane.dart';
 import 'note_editor_screen.dart';
@@ -17,11 +19,26 @@ class NotesHomeScreen extends ConsumerWidget {
     final isWide = MediaQuery.sizeOf(context).width >= 900;
     final notesAsync = ref.watch(notesProvider);
     final selectedId = ref.watch(selectedNoteIdProvider);
+    final quickMemoState = ref.watch(quickMemoControllerProvider);
+    final hasDraft =
+        quickMemoState.loaded && quickMemoState.content.trim().isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Patto!'),
         actions: [
+          if (hasDraft)
+            TextButton(
+              onPressed: () => Navigator.of(
+                context,
+              ).pushNamed('/quick-memo', arguments: const QuickMemoRouteArgs()),
+              child: const Text('下書き'),
+            ),
+          IconButton(
+            tooltip: 'タグ管理',
+            onPressed: () => Navigator.of(context).pushNamed('/tags'),
+            icon: const Icon(Icons.sell_outlined),
+          ),
           IconButton(
             tooltip: '設定',
             onPressed: () => Navigator.of(context).pushNamed('/settings'),
@@ -67,17 +84,13 @@ class NotesHomeScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
       ),
       floatingActionButton: FloatingActionButton(
-        tooltip: '新規メモ',
+        tooltip: 'クイックメモ',
         onPressed: () async {
-          final repo = ref.read(noteRepositoryProvider);
-          final note = await repo.createNote();
-          ref.read(selectedNoteIdProvider.notifier).state = note.uuid;
-          await ref.read(appSettingsProvider.notifier).setLastOpenedNoteId(note.uuid);
-          if (!isWide && context.mounted) {
-            await Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => NoteEditorScreen(noteId: note.uuid)),
-            );
-          }
+          if (!context.mounted) return;
+          await Navigator.of(context).pushNamed(
+            '/quick-memo',
+            arguments: QuickMemoRouteArgs(showDraftActionSheetOnOpen: hasDraft),
+          );
         },
         child: const Icon(Icons.add),
       ),
@@ -112,16 +125,11 @@ class _NotesList extends ConsumerWidget {
         overlay.size.height - position.dy,
       ),
       items: const [
-        PopupMenuItem(
-          value: _NoteMenuAction.rename,
-          child: Text('タイトル変更'),
-        ),
-        PopupMenuItem(
-          value: _NoteMenuAction.delete,
-          child: Text('削除'),
-        ),
+        PopupMenuItem(value: _NoteMenuAction.rename, child: Text('タイトル変更')),
+        PopupMenuItem(value: _NoteMenuAction.delete, child: Text('削除')),
       ],
     );
+    if (!context.mounted) return;
     if (action == null) return;
     if (!context.mounted) return;
     switch (action) {
@@ -132,7 +140,11 @@ class _NotesList extends ConsumerWidget {
     }
   }
 
-  Future<void> _renameNote(BuildContext context, WidgetRef ref, Note note) async {
+  Future<void> _renameNote(
+    BuildContext context,
+    WidgetRef ref,
+    Note note,
+  ) async {
     final controller = TextEditingController(text: note.title);
     final focusNode = FocusNode();
     final repo = ref.read(noteRepositoryProvider);
@@ -140,13 +152,15 @@ class _NotesList extends ConsumerWidget {
     Future<void> submit(BuildContext dialogContext) async {
       final next = controller.text.trim();
       if (next.isNotEmpty) {
-        final duplicated =
-            await repo.isTitleDuplicate(title: next, excludeId: note.uuid);
+        final duplicated = await repo.isTitleDuplicate(
+          title: next,
+          excludeId: note.uuid,
+        );
         if (duplicated) {
           if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('同じタイトルのメモが既にあります')),
-            );
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('同じタイトルのメモが既にあります')));
             focusNode.requestFocus();
           }
           return;
@@ -192,7 +206,11 @@ class _NotesList extends ConsumerWidget {
     await repo.updateTitle(note.uuid, trimmed);
   }
 
-  Future<void> _deleteNote(BuildContext context, WidgetRef ref, Note note) async {
+  Future<void> _deleteNote(
+    BuildContext context,
+    WidgetRef ref,
+    Note note,
+  ) async {
     final repo = ref.read(noteRepositoryProvider);
     await repo.softDelete(note.uuid);
     if (!context.mounted) return;
@@ -213,7 +231,8 @@ class _NotesList extends ConsumerWidget {
               prefixIcon: const Icon(Icons.search),
               isDense: true,
             ),
-            onChanged: (v) => ref.read(notesSearchQueryProvider.notifier).state = v,
+            onChanged: (v) =>
+                ref.read(notesSearchQueryProvider.notifier).state = v,
           ),
         ),
         Expanded(

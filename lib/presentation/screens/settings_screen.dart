@@ -1,18 +1,23 @@
+// ignore_for_file: deprecated_member_use
+
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/providers.dart';
 import '../../data/models/note.dart';
 import '../../domain/app_settings.dart';
+import '../../services/sync_service.dart';
 import '../providers/ai_providers.dart';
 import '../providers/app_settings_controller.dart';
 import '../providers/auth_providers.dart';
 import '../providers/note_repository_provider.dart';
 import '../providers/sync_providers.dart';
 import '../widgets/app_input_decoration.dart';
-import '../../services/sync_service.dart';
+import '../widgets/top_right_toast.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -21,8 +26,133 @@ class SettingsScreen extends ConsumerStatefulWidget {
   ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
+class _KeyBindingCaptureDialog extends StatefulWidget {
+  const _KeyBindingCaptureDialog({required this.title});
+
+  final String title;
+
+  @override
+  State<_KeyBindingCaptureDialog> createState() =>
+      _KeyBindingCaptureDialogState();
+}
+
+class _KeyBindingCaptureDialogState extends State<_KeyBindingCaptureDialog> {
+  final _focusNode = FocusNode();
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  bool _isModifierKey(LogicalKeyboardKey key) {
+    return key == LogicalKeyboardKey.shiftLeft ||
+        key == LogicalKeyboardKey.shiftRight ||
+        key == LogicalKeyboardKey.shift ||
+        key == LogicalKeyboardKey.controlLeft ||
+        key == LogicalKeyboardKey.controlRight ||
+        key == LogicalKeyboardKey.control ||
+        key == LogicalKeyboardKey.altLeft ||
+        key == LogicalKeyboardKey.altRight ||
+        key == LogicalKeyboardKey.alt ||
+        key == LogicalKeyboardKey.metaLeft ||
+        key == LogicalKeyboardKey.metaRight ||
+        key == LogicalKeyboardKey.meta;
+  }
+
+  void _handleKey(RawKeyEvent event) {
+    if (event is! RawKeyDownEvent) return;
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      Navigator.of(context).pop();
+      return;
+    }
+    if (_isModifierKey(event.logicalKey)) {
+      setState(() => _error = '修飾キーだけでは設定できません');
+      return;
+    }
+
+    if (event.data is! RawKeyEventDataMacOs) {
+      setState(() => _error = 'この環境では設定できません');
+      return;
+    }
+
+    final hasModifier = event.isMetaPressed ||
+        event.isControlPressed ||
+        event.isAltPressed ||
+        event.isShiftPressed;
+    if (!hasModifier) {
+      setState(() => _error = '修飾キーを1つ以上入れてください');
+      return;
+    }
+
+    final data = event.data as RawKeyEventDataMacOs;
+    final label = event.logicalKey.keyLabel.isNotEmpty
+        ? event.logicalKey.keyLabel
+        : (event.logicalKey.debugName ?? '');
+    final binding = MacKeyBinding(
+      keyCode: data.keyCode,
+      keyLabel: label,
+      command: event.isMetaPressed,
+      control: event.isControlPressed,
+      option: event.isAltPressed,
+      shift: event.isShiftPressed,
+    );
+    Navigator.of(context).pop(binding);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: RawKeyboardListener(
+        focusNode: _focusNode,
+        onKey: _handleKey,
+        child: SizedBox(
+          width: 360,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('割り当てたいキーを押してください'),
+              const SizedBox(height: 8),
+              const Text('Escでキャンセル'),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('キャンセル'),
+        ),
+      ],
+    );
+  }
+}
+
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _aiKeyController = TextEditingController();
+  final _presetNameControllers =
+      List<TextEditingController>.generate(6, (_) => TextEditingController());
+  final _presetPromptControllers =
+      List<TextEditingController>.generate(6, (_) => TextEditingController());
+  Timer? _presetDebounce;
   var _aiKeyVisible = false;
   var _aiKeyRegistered = false;
   var _syncing = false;
@@ -30,6 +160,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    _syncPresetControllers(ref.read(appSettingsProvider).aiPromptPresets);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final repo = ref.read(aiKeyRepositoryProvider);
       final key = await repo.readKey();
@@ -44,7 +175,54 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   void dispose() {
     _aiKeyController.dispose();
+    for (final controller in _presetNameControllers) {
+      controller.dispose();
+    }
+    for (final controller in _presetPromptControllers) {
+      controller.dispose();
+    }
+    _presetDebounce?.cancel();
     super.dispose();
+  }
+
+  void _syncPresetControllers(List<AiPromptPreset> presets) {
+    for (var i = 0; i < _presetNameControllers.length; i++) {
+      final preset = i < presets.length
+          ? presets[i]
+          : const AiPromptPreset(name: '', prompt: '');
+      if (_presetNameControllers[i].text != preset.name) {
+        _presetNameControllers[i].text = preset.name;
+      }
+      if (_presetPromptControllers[i].text != preset.prompt) {
+        _presetPromptControllers[i].text = preset.prompt;
+      }
+    }
+  }
+
+  void _schedulePresetSave() {
+    _presetDebounce?.cancel();
+    _presetDebounce = Timer(const Duration(milliseconds: 300), () {
+      final presets = List<AiPromptPreset>.generate(
+        6,
+        (index) => AiPromptPreset(
+          name: _presetNameControllers[index].text,
+          prompt: _presetPromptControllers[index].text,
+        ),
+      );
+      ref.read(appSettingsProvider.notifier).setAiPromptPresets(presets);
+    });
+  }
+
+  Future<void> _selectKeyBinding({
+    required String title,
+    required Future<void> Function(MacKeyBinding? next) onChanged,
+  }) async {
+    final result = await showDialog<MacKeyBinding?>(
+      context: context,
+      builder: (_) => _KeyBindingCaptureDialog(title: title),
+    );
+    if (result == null) return;
+    await onChanged(result);
   }
 
   Future<void> _saveAiKey() async {
@@ -76,6 +254,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('AI APIキーを保存しました')),
     );
+  }
+
+  Future<void> _toggleAppleIntelligence(bool enabled) async {
+    if (!enabled) {
+      await ref
+          .read(appSettingsProvider.notifier)
+          .setAiAppleIntelligenceEnabled(false);
+      return;
+    }
+    final ai = ref.read(aiServiceProvider);
+    final availability = await ai.checkAppleIntelligenceAvailability();
+    if (!mounted) return;
+    if (!availability.isAvailable) {
+      showTopRightToast(
+        context,
+        'Apple Intelligence対応端末でないか、設定がされていないため利用できません。',
+      );
+      return;
+    }
+    await ref
+        .read(appSettingsProvider.notifier)
+        .setAiAppleIntelligenceEnabled(true);
   }
 
   Future<void> _deleteAiKey() async {
@@ -329,9 +529,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ],
             ),
           ),
-          if (Platform.isMacOS)
+          if (Platform.isMacOS) ...[
             ListTile(
-              title: const Text('macOS: 装飾キー（ダブルタップ）'),
+              title: const Text('macOS: 表示/非表示（ダブルタップ）'),
               trailing: DropdownButton<MacModifierKey>(
                 value: settings.macModifierKey,
                 onChanged: (v) {
@@ -358,13 +558,126 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ],
               ),
             ),
+            ListTile(
+              title: const Text('macOS: 表示/非表示（通常キーバインド）'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(settings.macShowHideKeyBinding?.displayLabel() ?? '未設定'),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () => _selectKeyBinding(
+                      title: '表示/非表示のキーバインド',
+                      onChanged: (binding) async {
+                        await ref
+                            .read(appSettingsProvider.notifier)
+                            .setMacShowHideKeyBinding(binding);
+                      },
+                    ),
+                    child: const Text('設定'),
+                  ),
+                  TextButton(
+                    onPressed: settings.macShowHideKeyBinding == null
+                        ? null
+                        : () => ref
+                            .read(appSettingsProvider.notifier)
+                            .setMacShowHideKeyBinding(null),
+                    child: const Text('クリア'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const Divider(height: 32),
+          Text('表示', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            title: const Text('本文の文字数を表示'),
+            value: settings.charCountEnabled,
+            onChanged: (v) =>
+                ref.read(appSettingsProvider.notifier).setCharCountEnabled(v),
+          ),
+          SwitchListTile(
+            title: const Text('句読点・記号を除外してカウント'),
+            value: settings.charCountExcludeSymbols,
+            onChanged: settings.charCountEnabled
+                ? (v) => ref
+                    .read(appSettingsProvider.notifier)
+                    .setCharCountExcludeSymbols(v)
+                : null,
+          ),
           const Divider(height: 32),
           Text('AI', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
+          if (Platform.isMacOS)
+            SwitchListTile(
+              title: const Text('Apple Intelligenceを有効化'),
+              value: settings.aiAppleIntelligenceEnabled,
+              onChanged: _toggleAppleIntelligence,
+            ),
           SwitchListTile(
-            title: const Text('AI文章編集を有効化'),
-            value: settings.aiEnabled,
-            onChanged: (v) => ref.read(appSettingsProvider.notifier).setAiEnabled(v),
+            title: const Text('外部AI APIを有効化'),
+            value: settings.aiExternalApiEnabled,
+            onChanged: (v) => ref
+                .read(appSettingsProvider.notifier)
+                .setAiExternalApiEnabled(v),
+          ),
+          SwitchListTile(
+            title: const Text('AI編集プレビューを表示'),
+            value: settings.aiPreviewEnabled,
+            onChanged: (v) => ref
+                .read(appSettingsProvider.notifier)
+                .setAiPreviewEnabled(v),
+          ),
+          if (Platform.isMacOS)
+            ListTile(
+              title: const Text('AI編集ショートカット（アプリ内）'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(settings.aiEditKeyBinding?.displayLabel() ?? '未設定'),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () => _selectKeyBinding(
+                      title: 'AI編集ショートカット',
+                      onChanged: (binding) async {
+                        await ref
+                            .read(appSettingsProvider.notifier)
+                            .setAiEditKeyBinding(binding);
+                      },
+                    ),
+                    child: const Text('設定'),
+                  ),
+                  TextButton(
+                    onPressed: settings.aiEditKeyBinding == null
+                        ? null
+                        : () => ref
+                            .read(appSettingsProvider.notifier)
+                            .setAiEditKeyBinding(null),
+                    child: const Text('クリア'),
+                  ),
+                ],
+              ),
+            ),
+          ListTile(
+            title: const Text('AIプロンプト送信キー'),
+            trailing: DropdownButton<AiPromptSendKey>(
+              value: settings.aiPromptSendKey,
+              onChanged: (v) {
+                if (v == null) return;
+                ref.read(appSettingsProvider.notifier).setAiPromptSendKey(v);
+              },
+              items: const [
+                DropdownMenuItem(
+                  value: AiPromptSendKey.ctrlEnter,
+                  child: Text('Ctrl+Enterで送信'),
+                ),
+                DropdownMenuItem(
+                  value: AiPromptSendKey.enter,
+                  child: Text('Enterで送信'),
+                ),
+              ],
+            ),
           ),
           ListTile(
             title: const Text('AI APIキー'),
@@ -400,6 +713,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: const Text('保存'),
             ),
           ),
+          const SizedBox(height: 16),
+          Text('カスタムプロンプト', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          for (var i = 0; i < 6; i++) ...[
+            Text('プリセット ${i + 1}'),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _presetNameControllers[i],
+              decoration: appInputDecoration(
+                labelText: 'プリセット名',
+              ),
+              onChanged: (_) => _schedulePresetSave(),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _presetPromptControllers[i],
+              decoration: appInputDecoration(
+                labelText: 'プロンプト',
+              ),
+              minLines: 2,
+              maxLines: 4,
+              onChanged: (_) => _schedulePresetSave(),
+            ),
+            const SizedBox(height: 16),
+          ],
         ],
       ),
     );

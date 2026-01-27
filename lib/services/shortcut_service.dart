@@ -3,18 +3,25 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 
 import '../domain/app_settings.dart';
+import '../domain/quick_launch_event.dart';
+
+// test write
 
 class ShortcutService {
   ShortcutService() : _channel = const MethodChannel(_channelName);
 
   final MethodChannel _channel;
-  void Function(String? source)? _onQuickLaunch;
+  void Function(QuickLaunchEvent event)? _onQuickLaunch;
   void Function(String content)? _onExternalPaste;
 
-  Future<void> configureMac({required MacModifierKey modifierKey}) async {
+  Future<void> configureMac({
+    required MacModifierKey modifierKey,
+    MacKeyBinding? showHideKeyBinding,
+  }) async {
     if (!Platform.isMacOS) return;
     await _channel.invokeMethod<void>('configure', {
       'modifierKey': modifierKey.toStorageString(),
+      'showHideKeyBinding': showHideKeyBinding?.toMap(),
     });
     await _channel.invokeMethod<void>('start');
   }
@@ -24,7 +31,7 @@ class ShortcutService {
     await _channel.invokeMethod<void>('stop');
   }
 
-  void setOnQuickLaunch(void Function(String? source) onQuickLaunch) {
+  void setOnQuickLaunch(void Function(QuickLaunchEvent event) onQuickLaunch) {
     _onQuickLaunch = onQuickLaunch;
     _setupHandler();
   }
@@ -39,11 +46,21 @@ class ShortcutService {
       if (call.method == 'onQuickLaunch') {
         final args = call.arguments;
         String? source;
-        if (args is Map && args['source'] is String) {
-          source = args['source'] as String;
+        String? actionRaw;
+        if (args is Map) {
+          if (args['source'] is String) {
+            source = args['source'] as String;
+          }
+          if (args['action'] is String) {
+            actionRaw = args['action'] as String;
+          }
         }
-        _onQuickLaunch?.call(source);
-      } else if (call.method == 'onExternalPaste') {
+        final action = QuickLaunchActionCodec.fromString(actionRaw);
+        _onQuickLaunch?.call(QuickLaunchEvent(action: action, source: source));
+        return;
+      }
+
+      if (call.method == 'onExternalPaste') {
         final args = call.arguments;
         if (args is Map && args['content'] is String) {
           final content = args['content'] as String;
