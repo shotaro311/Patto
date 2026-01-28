@@ -4,6 +4,8 @@ import UIKit
 @main
 @objc class AppDelegate: FlutterAppDelegate {
   private var quickLaunchChannel: FlutterMethodChannel?
+  private var appleIntelligenceChannel: FlutterMethodChannel?
+  private let appleIntelligenceBridge = AppleIntelligenceBridge()
   private var pendingQuickLaunch = false
 
   override func application(
@@ -17,6 +19,16 @@ import UIKit
         name: "com.patto/quick_launch",
         binaryMessenger: registrar.messenger()
       )
+    }
+    if let registrar = self.registrar(forPlugin: "com.patto/apple_intelligence") {
+      let channel = FlutterMethodChannel(
+        name: "com.patto/apple_intelligence",
+        binaryMessenger: registrar.messenger()
+      )
+      channel.setMethodCallHandler { [weak self] call, result in
+        self?.appleIntelligenceBridge.handle(call, result: result)
+      }
+      appleIntelligenceChannel = channel
     }
 
     if launchOptions?[.shortcutItem] != nil {

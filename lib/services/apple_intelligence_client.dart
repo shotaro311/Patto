@@ -62,8 +62,10 @@ class AppleIntelligenceClient {
     "言語モデルとして",
   ];
 
+  bool get _isAppleIntelligencePlatform => Platform.isMacOS || Platform.isIOS;
+
   Future<AppleIntelligenceAvailability> checkAvailability() async {
-    if (!Platform.isMacOS) {
+    if (!_isAppleIntelligencePlatform) {
       return AppleIntelligenceAvailability.notSupported;
     }
     try {
@@ -81,7 +83,7 @@ class AppleIntelligenceClient {
     required String instruction,
     required String originalText,
   }) async {
-    if (!Platform.isMacOS) {
+    if (!_isAppleIntelligencePlatform) {
       throw PlatformException(
         code: 'not_supported',
         message: 'Apple Intelligenceはこのプラットフォームではサポートされていません',
@@ -112,7 +114,7 @@ class AppleIntelligenceClient {
     required List<String> existingTags,
     required List<String> dictionaryTags,
   }) async {
-    if (!Platform.isMacOS) {
+    if (!_isAppleIntelligencePlatform) {
       throw PlatformException(
         code: 'not_supported',
         message: 'Apple Intelligenceはこのプラットフォームではサポートされていません',

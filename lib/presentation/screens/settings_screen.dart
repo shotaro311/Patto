@@ -609,7 +609,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const Divider(height: 32),
           Text('AI', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          if (Platform.isMacOS)
+          if (Platform.isMacOS || Platform.isIOS)
             SwitchListTile(
               title: const Text('Apple Intelligenceを有効化'),
               value: settings.aiAppleIntelligenceEnabled,
