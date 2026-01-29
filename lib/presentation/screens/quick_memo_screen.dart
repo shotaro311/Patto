@@ -282,8 +282,10 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   Future<void> _addManualTag(Note note) async {
     final controller = TextEditingController();
     try {
+      final rootNavigator = Navigator.of(context, rootNavigator: true);
       final tag = await showDialog<String>(
-        context: context,
+        context: rootNavigator.context,
+        useRootNavigator: true,
         builder: (context) {
           return AlertDialog(
             title: const Text('タグを追加'),
