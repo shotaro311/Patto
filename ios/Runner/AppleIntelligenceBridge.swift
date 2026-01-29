@@ -17,7 +17,7 @@ final class AppleIntelligenceBridge {
   }
 
   private enum ErrorMessage {
-    static let notSupported = "Apple IntelligenceはiOS 18.0以降が必要です"
+    static let notSupported = "Apple IntelligenceはiOS 26.0以降が必要です"
     static let badArgs = "引数が不正です"
     static let notAvailable = "Apple Intelligenceが利用できません"
     static let emptyResponse = "Apple Intelligenceから応答がありませんでした"
@@ -40,7 +40,7 @@ final class AppleIntelligenceBridge {
   }
 
   private func handleEditText(call: FlutterMethodCall, result: @escaping FlutterResult) {
-    guard #available(iOS 18.0, *) else {
+    guard #available(iOS 26.0, *) else {
       result(FlutterError(code: ErrorCode.notSupported, message: ErrorMessage.notSupported, details: nil))
       return
     }
@@ -60,7 +60,7 @@ final class AppleIntelligenceBridge {
   }
 
   private func handleSuggestTags(call: FlutterMethodCall, result: @escaping FlutterResult) {
-    guard #available(iOS 18.0, *) else {
+    guard #available(iOS 26.0, *) else {
       result(FlutterError(code: ErrorCode.notSupported, message: ErrorMessage.notSupported, details: nil))
       return
     }
@@ -82,7 +82,7 @@ final class AppleIntelligenceBridge {
 
   private func availabilityStatus() -> String {
 #if canImport(FoundationModels)
-    if #available(iOS 18.0, *) {
+    if #available(iOS 26.0, *) {
       let model = SystemLanguageModel.default
       switch model.availability {
       case .available:
@@ -120,7 +120,7 @@ final class AppleIntelligenceBridge {
   }
 
 #if canImport(FoundationModels)
-  @available(iOS 18.0, *)
+  @available(iOS 26.0, *)
   private func editText(instruction: String, text: String) async throws -> String {
     let instructions = [
       "You are a writing assistant.",
@@ -146,7 +146,7 @@ final class AppleIntelligenceBridge {
     return trimmed
   }
 
-  @available(iOS 18.0, *)
+  @available(iOS 26.0, *)
   private func suggestTags(text: String, existingTags: [String], dictionaryTags: [String]) async throws -> [String] {
     let existing = Set(existingTags
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
