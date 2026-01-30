@@ -16,6 +16,18 @@ SemanticsHandle? _semanticsHandle;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  assert(() {
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      debugPrintStack(stackTrace: details.stack);
+    };
+    PlatformDispatcher.instance.onError = (error, stack) {
+      debugPrint('Uncaught error: $error');
+      debugPrintStack(stackTrace: stack);
+      return false;
+    };
+    return true;
+  }());
   if (Platform.isMacOS) {
     _semanticsHandle ??= WidgetsBinding.instance.ensureSemantics();
   }
