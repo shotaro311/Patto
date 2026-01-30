@@ -324,9 +324,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   Future<void> _addManualTag(Note note) async {
     final controller = TextEditingController();
     try {
-      final rootNavigator = Navigator.of(context, rootNavigator: true);
       final tag = await showDialog<String>(
-        context: rootNavigator.context,
+        context: context,
         useRootNavigator: true,
         builder: (context) {
           return AlertDialog(
@@ -336,15 +335,20 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
               autofocus: true,
               decoration: appInputDecoration(hintText: '例: todo'),
               textInputAction: TextInputAction.done,
-              onSubmitted: (_) => Navigator.of(context).pop(controller.text),
+              onSubmitted: (_) =>
+                  Navigator.of(context, rootNavigator: true)
+                      .pop(controller.text),
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () =>
+                    Navigator.of(context, rootNavigator: true).pop(),
                 child: const Text('キャンセル'),
               ),
               TextButton(
-                onPressed: () => Navigator.of(context).pop(controller.text),
+                onPressed: () =>
+                    Navigator.of(context, rootNavigator: true)
+                        .pop(controller.text),
                 child: const Text('追加'),
               ),
             ],
