@@ -322,50 +322,44 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   }
 
   Future<void> _addManualTag(Note note) async {
-    final controller = TextEditingController();
-    try {
-      final tag = await showDialog<String>(
-        context: context,
-        useRootNavigator: true,
-        builder: (context) {
-          return AlertDialog(
-            title: const Text('タグを追加'),
-            content: TextField(
-              controller: controller,
-              autofocus: true,
-              decoration: appInputDecoration(hintText: '例: todo'),
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) =>
-                  Navigator.of(context, rootNavigator: true)
-                      .pop(controller.text),
+    if (!mounted) return;
+    var input = '';
+    final tag = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('タグを追加'),
+          content: TextField(
+            autofocus: true,
+            decoration: appInputDecoration(hintText: '例: todo'),
+            textInputAction: TextInputAction.done,
+            onChanged: (value) => input = value,
+            onSubmitted: (value) => Navigator.pop(dialogContext, value),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('キャンセル'),
             ),
-            actions: [
-              TextButton(
-                onPressed: () =>
-                    Navigator.of(context, rootNavigator: true).pop(),
-                child: const Text('キャンセル'),
-              ),
-              TextButton(
-                onPressed: () =>
-                    Navigator.of(context, rootNavigator: true)
-                        .pop(controller.text),
-                child: const Text('追加'),
-              ),
-            ],
-          );
-        },
-      );
-      final tagRepo = ref.read(tagDictionaryRepositoryProvider);
-      final canonical = await tagRepo.resolveToCanonical(tag ?? '');
-      if (canonical.isEmpty) return;
-      final existing = await tagRepo.resolveAll(note.manualTags);
-      final next = <String>{...existing, canonical}.toList()..sort();
-      final repo = ref.read(noteRepositoryProvider);
-      await repo.setManualTags(note.uuid, next);
-      await tagRepo.recordUsage(canonical);
-    } finally {
-      controller.dispose();
-    }
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, input),
+              child: const Text('追加'),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted) return;
+    if (tag == null) return;
+    final tagRepo = ref.read(tagDictionaryRepositoryProvider);
+    final canonical = await tagRepo.resolveToCanonical(tag);
+    if (canonical.isEmpty) return;
+    if (!mounted) return;
+    final existing = await tagRepo.resolveAll(note.manualTags);
+    final next = <String>{...existing, canonical}.toList()..sort();
+    final repo = ref.read(noteRepositoryProvider);
+    await repo.setManualTags(note.uuid, next);
+    await tagRepo.recordUsage(canonical);
   }
 
   Future<void> _removeManualTag(Note note, String tag) async {
