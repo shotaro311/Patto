@@ -61,9 +61,16 @@ class AppSettingsController extends StateNotifier<AppSettings> {
         prefs.getString(_kAiPromptSendKey),
       ),
       aiPromptPresets: _readAiPresets(prefs.getString(_kAiPromptPresets)),
+      aiImageSendLimit: _readAiImageSendLimit(prefs),
       lastOpenedNoteId: prefs.getString(_kLastOpenedNoteId),
       lastSyncAt: _readDateTime(prefs, _kLastSyncAt),
     );
+  }
+
+  static int _readAiImageSendLimit(SharedPreferences prefs) {
+    final raw = prefs.getInt(_kAiImageSendLimit);
+    if (raw == null || raw < 1) return 3;
+    return raw;
   }
 
   static DateTime? _readDateTime(SharedPreferences prefs, String key) {
@@ -197,6 +204,12 @@ class AppSettingsController extends StateNotifier<AppSettings> {
     state = state.copyWith(aiPromptSendKey: key);
   }
 
+  Future<void> setAiImageSendLimit(int value) async {
+    final next = value < 1 ? 1 : value;
+    await _prefs.setInt(_kAiImageSendLimit, next);
+    state = state.copyWith(aiImageSendLimit: next);
+  }
+
   Future<void> setAiPromptPresets(List<AiPromptPreset> presets) async {
     final trimmed = presets
         .map((p) => AiPromptPreset(name: p.name, prompt: p.prompt))
@@ -242,5 +255,6 @@ const _kAiPreviewEnabled = 'aiPreviewEnabled';
 const _kAiEditKeyBinding = 'aiEditKeyBinding';
 const _kAiPromptSendKey = 'aiPromptSendKey';
 const _kAiPromptPresets = 'aiPromptPresets';
+const _kAiImageSendLimit = 'aiImageSendLimit';
 const _kLastOpenedNoteId = 'lastOpenedNoteId';
 const _kLastSyncAt = 'lastSyncAt';

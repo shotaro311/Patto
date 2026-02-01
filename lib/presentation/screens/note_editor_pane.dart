@@ -1,13 +1,18 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/models/note.dart';
 import '../../domain/app_settings.dart';
+import '../../services/ai_service.dart';
 import '../../data/repositories/tag_dictionary_repository.dart';
+import '../providers/attachment_repository_provider.dart';
 import '../providers/ai_providers.dart';
 import '../providers/app_settings_controller.dart';
 import '../providers/note_repository_provider.dart';
@@ -63,6 +68,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   int? _runningPresetIndex;
   AiEditScope _promptScope = AiEditScope.full;
   String _lastScopeKey = '';
+  bool _aiImageContextEnabled = false;
 
   int _countText(String text, bool excludeSymbols) {
     if (!excludeSymbols) return text.runes.length;
@@ -138,7 +144,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     }
   }
 
-  Future<void> _runInlineAiEdit(AiPromptPreset preset, int index) async {
+  Future<void> _runInlineAiEdit(
+    Note note,
+    AiPromptPreset preset,
+    int index,
+  ) async {
     if (_inlineBusy) return;
     final target = _buildTargetForScope(_promptScope);
     if (target == null) return;
@@ -152,9 +162,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     try {
       final settings = ref.read(appSettingsProvider);
       final ai = ref.read(aiServiceProvider);
-      final result = await ai.editText(
+      final images = await _collectAiImages(note);
+      final result = await ai.editTextWithImages(
         instruction: preset.prompt,
         originalText: target.originalText,
+        images: images,
         useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
         useExternalApi: settings.aiExternalApiEnabled,
       );
@@ -500,9 +512,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   }
 
   Future<void> _openAiEditDialog({
+    required Note note,
     AiPromptPreset? preset,
     bool fromContextMenu = false,
     AiEditScope? scopeOverride,
+    NoteAttachment? imageOverride,
   }) async {
     final settings = ref.read(appSettingsProvider);
     if (!settings.aiEnabled) return;
@@ -560,12 +574,17 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       hasSelection: treatAsSelection,
     );
 
+    final images = await _collectAiImages(
+      note,
+      overrideAttachment: imageOverride,
+    );
     final result = await showDialog<String>(
       context: context,
       barrierDismissible: false,
       builder: (_) => AiEditDialog(
         targetText: target.originalText,
         targetLabel: targetLabel,
+        images: images,
         previewEnabled: settings.aiPreviewEnabled,
         sendKey: settings.aiPromptSendKey,
         initialPrompt: preset?.prompt,
@@ -618,19 +637,307 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     return true;
   }
 
+  bool _handleEnterKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.enter) return false;
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isMetaPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isAltPressed) {
+      return false;
+    }
+    return _convertUrlBeforeEnter();
+  }
+
+  bool _convertUrlBeforeEnter() {
+    final selection = _controller.selection;
+    if (!selection.isValid || !selection.isCollapsed) return false;
+    final cursor = selection.baseOffset;
+    if (cursor < 0) return false;
+
+    final text = _controller.text;
+    final lineStart = text.lastIndexOf('\n', cursor - 1);
+    final lineOffset = lineStart < 0 ? 0 : lineStart + 1;
+    final linePrefix = text.substring(lineOffset, cursor);
+    Match? lastMatch;
+    for (final m in _urlPattern.allMatches(linePrefix)) {
+      lastMatch = m;
+    }
+    if (lastMatch == null || lastMatch.end != linePrefix.length) {
+      return false;
+    }
+
+    final url = linePrefix.substring(lastMatch.start, lastMatch.end);
+    final absoluteStart = lineOffset + lastMatch.start;
+    final absoluteEnd = lineOffset + lastMatch.end;
+    if (_isUrlAlreadyLinked(text, absoluteStart, absoluteEnd)) {
+      return false;
+    }
+
+    final markdown = '[$url]($url)';
+    final replaced = text.replaceRange(absoluteStart, absoluteEnd, markdown);
+    final insertAt = absoluteStart + markdown.length;
+    final next = replaced.replaceRange(insertAt, insertAt, '\n');
+    _controller.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: insertAt + 1),
+    );
+    _scheduleSave();
+    return true;
+  }
+
+  bool _isUrlAlreadyLinked(String text, int start, int end) {
+    if (start >= 2 && text.substring(start - 2, start) == '](') {
+      return true;
+    }
+    if (start >= 1 &&
+        end < text.length &&
+        text[start - 1] == '<' &&
+        text[end] == '>') {
+      return true;
+    }
+    return false;
+  }
+
+  String? _extractUrlFromSelection(EditableTextState editableTextState) {
+    final selection = editableTextState.textEditingValue.selection;
+    final text = editableTextState.textEditingValue.text;
+    if (!selection.isValid) return null;
+    if (!selection.isCollapsed) {
+      final selected = text.substring(selection.start, selection.end);
+      final match = _urlPattern.firstMatch(selected);
+      return match?.group(0);
+    }
+    final cursor = selection.baseOffset;
+    if (cursor < 0) return null;
+    for (final match in _urlPattern.allMatches(text)) {
+      if (match.start <= cursor && cursor <= match.end) {
+        return match.group(0);
+      }
+    }
+    return null;
+  }
+
+  Future<void> _copyUrl(String url) async {
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    showTopRightToast(context, 'URLをコピーしました。');
+  }
+
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      showTopRightToast(context, 'URLが不正です。');
+      return;
+    }
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      showTopRightToast(context, 'ブラウザで開けませんでした。');
+    }
+  }
+
+  Future<void> _addImageAttachment(Note note) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+    );
+    if (!mounted || result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null) {
+      showTopRightToast(context, '画像の取得に失敗しました。');
+      return;
+    }
+    final repo = ref.read(attachmentRepositoryProvider);
+    final attachment = await repo.addImageAttachmentFromFile(
+      noteId: note.uuid,
+      file: File(path),
+    );
+    if (attachment == null && mounted) {
+      showTopRightToast(context, '画像の追加に失敗しました。');
+    }
+  }
+
+  Future<List<AiImageInput>> _collectAiImages(
+    Note note, {
+    NoteAttachment? overrideAttachment,
+  }) async {
+    if (!_aiImageContextEnabled) return const [];
+    final limit = ref.read(appSettingsProvider).aiImageSendLimit;
+    if (limit <= 0) return const [];
+    final source = overrideAttachment != null
+        ? [overrideAttachment]
+        : note.attachments;
+    final targets = source.take(limit).toList();
+    final images = <AiImageInput>[];
+    for (final attachment in targets) {
+      final path = attachment.localPath;
+      if (path.isEmpty) continue;
+      final file = File(path);
+      if (!await file.exists()) continue;
+      final bytes = await file.readAsBytes();
+      final mime = attachment.mimeType.isNotEmpty
+          ? attachment.mimeType
+          : 'image/webp';
+      images.add(AiImageInput(bytes: bytes, mimeType: mime));
+    }
+    return images;
+  }
+
+  Future<void> _showAttachmentMenu(
+    Note note,
+    NoteAttachment attachment,
+    Offset position,
+  ) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromPoints(position, position),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(value: 'ai', child: Text('AI編集…')),
+      ],
+    );
+    if (!mounted || selected == null) return;
+    if (selected == 'ai') {
+      _openAiEditDialog(
+        note: note,
+        imageOverride: attachment,
+        fromContextMenu: true,
+      );
+    }
+  }
+
+  Widget _buildAiImageToggleRow(AppSettings settings) {
+    final muted = Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '画像をAIに含める（上限${settings.aiImageSendLimit}枚）',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+            Switch(
+              value: _aiImageContextEnabled,
+              onChanged: (value) =>
+                  setState(() => _aiImageContextEnabled = value),
+            ),
+          ],
+        ),
+        Text('注意: 画像を送信するとAPIコストが増える可能性があります。', style: muted),
+      ],
+    );
+  }
+
+  Widget _buildAttachmentSection(Note note) {
+    final attachments = note.attachments;
+    if (attachments.isEmpty) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: () => _addImageAttachment(note),
+          icon: const Icon(Icons.add_photo_alternate_outlined),
+          label: const Text('画像を追加'),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('添付画像', style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(width: 8),
+            TextButton.icon(
+              onPressed: () => _addImageAttachment(note),
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              label: const Text('追加'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 120,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: attachments.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, index) {
+              final attachment = attachments[index];
+              final file = File(attachment.localPath);
+              return GestureDetector(
+                onSecondaryTapDown: (details) =>
+                    _showAttachmentMenu(note, attachment, details.globalPosition),
+                onLongPressStart: (details) =>
+                    _showAttachmentMenu(note, attachment, details.globalPosition),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                    width: 160,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
+                      ),
+                      child: Image.file(
+                        file,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Center(
+                          child: Icon(Icons.broken_image_outlined),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAiContextMenu(
     BuildContext context,
     EditableTextState editableTextState,
     AppSettings settings,
+    Note note,
   ) {
     final presets = settings.aiPromptPresets.where((preset) => !preset.isEmpty);
+    final url = _extractUrlFromSelection(editableTextState);
     final items = <ContextMenuButtonItem>[
+      if (url != null) ...[
+        ContextMenuButtonItem(
+          label: 'URLをコピー',
+          onPressed: () {
+            editableTextState.hideToolbar();
+            _copyUrl(url);
+          },
+        ),
+        ContextMenuButtonItem(
+          label: 'ブラウザで表示',
+          onPressed: () {
+            editableTextState.hideToolbar();
+            _openUrl(url);
+          },
+        ),
+      ],
       ContextMenuButtonItem(
         label: 'AI編集…',
         onPressed: settings.aiEnabled
             ? () {
                 editableTextState.hideToolbar();
-                _openAiEditDialog(fromContextMenu: true);
+                _openAiEditDialog(note: note, fromContextMenu: true);
               }
             : null,
       ),
@@ -640,7 +947,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
           onPressed: settings.aiEnabled
               ? () {
                   editableTextState.hideToolbar();
-                  _openAiEditDialog(preset: preset, fromContextMenu: true);
+                  _openAiEditDialog(
+                    note: note,
+                    preset: preset,
+                    fromContextMenu: true,
+                  );
                 }
               : null,
         ),
@@ -780,13 +1091,24 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                   if (!settings.aiEnabled) return;
                                   if (settings.aiPreviewEnabled) {
                                     _openAiEditDialog(
+                                      note: note,
                                       preset: preset,
                                       scopeOverride: _promptScope,
                                     );
                                     return;
                                   }
-                                  _runInlineAiEdit(preset, index);
+                                  _runInlineAiEdit(note, preset, index);
                                 },
+                              ),
+                            ),
+                            ToolbarAction(
+                              id: 'add_image',
+                              builder: (context) => IconButton(
+                                tooltip: '画像を追加',
+                                onPressed: () => _addImageAttachment(note),
+                                icon: const Icon(
+                                  Icons.add_photo_alternate_outlined,
+                                ),
                               ),
                             ),
                             ToolbarAction(
@@ -820,7 +1142,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                     : 'AI編集は設定で有効化してください',
                                 child: IconButton(
                                   onPressed: settings.aiEnabled
-                                      ? () => _openAiEditDialog()
+                                      ? () => _openAiEditDialog(note: note)
                                       : null,
                                   icon: const Icon(Icons.auto_fix_high),
                                 ),
@@ -838,6 +1160,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 8),
+                    _buildAiImageToggleRow(settings),
+                    const SizedBox(height: 4),
+                    _buildAttachmentSection(note),
                     if (hasTagBar) ...[
                       const SizedBox(height: 8),
                       Wrap(
@@ -879,14 +1205,15 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                   children: [
                     Focus(
                       onKeyEvent: (node, event) {
-                        if (!settings.aiEnabled) {
-                          return KeyEventResult.ignored;
+                        if (_handleEnterKey(event)) {
+                          return KeyEventResult.handled;
                         }
-                        if (_matchesAiShortcut(
-                          event,
-                          settings.aiEditKeyBinding,
-                        )) {
-                          _openAiEditDialog();
+                        if (settings.aiEnabled &&
+                            _matchesAiShortcut(
+                              event,
+                              settings.aiEditKeyBinding,
+                            )) {
+                          _openAiEditDialog(note: note);
                           return KeyEventResult.handled;
                         }
                         return KeyEventResult.ignored;
@@ -905,6 +1232,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                             context,
                             editableTextState,
                             settings,
+                            note,
                           );
                         },
                       ),
@@ -994,6 +1322,7 @@ class AiEditDialog extends ConsumerStatefulWidget {
     super.key,
     required this.targetText,
     required this.targetLabel,
+    required this.images,
     required this.previewEnabled,
     required this.sendKey,
     required this.initialPrompt,
@@ -1003,6 +1332,7 @@ class AiEditDialog extends ConsumerStatefulWidget {
 
   final String targetText;
   final String targetLabel;
+  final List<AiImageInput> images;
   final bool previewEnabled;
   final AiPromptSendKey sendKey;
   final String? initialPrompt;
@@ -1055,9 +1385,10 @@ class _AiEditDialogState extends ConsumerState<AiEditDialog> {
     try {
       final settings = ref.read(appSettingsProvider);
       final ai = ref.read(aiServiceProvider);
-      result = await ai.editText(
+      result = await ai.editTextWithImages(
         instruction: instruction,
         originalText: widget.targetText,
+        images: widget.images,
         useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
         useExternalApi: settings.aiExternalApiEnabled,
       );

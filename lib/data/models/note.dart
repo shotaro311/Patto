@@ -29,6 +29,9 @@ class Note {
   /// 本文から抽出したリンク（例: [[noteId]] / URL など）。
   List<String> linksOut = [];
 
+  /// 添付（本文とは別に保持する画像など）。
+  List<NoteAttachment> attachments = [];
+
   late DateTime createdAt;
   late DateTime localUpdatedAt;
   DateTime? serverUpdatedAt;
@@ -37,6 +40,17 @@ class Note {
   String? clientId;
 
   bool isDirty = true;
+}
+
+@embedded
+class NoteAttachment {
+  NoteAttachment();
+
+  late String id;
+  String type = 'image';
+  String mimeType = 'image/webp';
+  String localPath = '';
+  DateTime createdAt = DateTime.now();
 }
 
 String deriveTitleFromContent(String content) {

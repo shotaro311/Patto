@@ -1,9 +1,16 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/models/note.dart';
 import '../../data/repositories/tag_dictionary_repository.dart';
 import '../../domain/app_settings.dart';
+import '../../services/ai_service.dart';
+import '../providers/attachment_repository_provider.dart';
 import '../providers/ai_providers.dart';
 import '../providers/app_settings_controller.dart';
 import '../providers/note_repository_provider.dart';
@@ -28,6 +35,7 @@ class QuickMemoScreen extends ConsumerStatefulWidget {
 
 class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   static final RegExp _symbolPattern = RegExp(r'[\p{P}\p{S}]', unicode: true);
+  static final RegExp _urlPattern = RegExp(r'https?://[^\s)>\"]+');
   final _focusNode = FocusNode();
   final _controller = TextEditingController();
   late final ExternalPasteGuard _externalPasteGuard;
@@ -40,6 +48,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   int? _runningPresetIndex;
   AiEditScope _promptScope = AiEditScope.full;
   String _lastScopeKey = '';
+  bool _aiImageContextEnabled = false;
   bool _aiTagSuggesting = false;
   int _aiTagSuggestToken = 0;
   List<String> _aiSuggestedTags = [];
@@ -120,7 +129,11 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     }
   }
 
-  Future<void> _runInlineAiEdit(AiPromptPreset preset, int index) async {
+  Future<void> _runInlineAiEdit(
+    AiPromptPreset preset,
+    int index, {
+    Note? note,
+  }) async {
     if (_inlineBusy) return;
     final target = _buildTargetForScope(_promptScope);
     if (target == null) return;
@@ -134,9 +147,11 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     try {
       final settings = ref.read(appSettingsProvider);
       final ai = ref.read(aiServiceProvider);
-      final result = await ai.editText(
+      final images = note == null ? const <AiImageInput>[] : await _collectAiImages(note);
+      final result = await ai.editTextWithImages(
         instruction: preset.prompt,
         originalText: target.originalText,
+        images: images,
         useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
         useExternalApi: settings.aiExternalApiEnabled,
       );
@@ -183,6 +198,328 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       _inlineBusy = false;
       _runningPresetIndex = null;
     });
+  }
+
+  bool _handleEnterKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.enter) return false;
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isMetaPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isAltPressed) {
+      return false;
+    }
+    return _convertUrlBeforeEnter();
+  }
+
+  bool _convertUrlBeforeEnter() {
+    final selection = _controller.selection;
+    if (!selection.isValid || !selection.isCollapsed) return false;
+    final cursor = selection.baseOffset;
+    if (cursor < 0) return false;
+
+    final text = _controller.text;
+    final lineStart = text.lastIndexOf('\n', cursor - 1);
+    final lineOffset = lineStart < 0 ? 0 : lineStart + 1;
+    final linePrefix = text.substring(lineOffset, cursor);
+    Match? lastMatch;
+    for (final m in _urlPattern.allMatches(linePrefix)) {
+      lastMatch = m;
+    }
+    if (lastMatch == null || lastMatch.end != linePrefix.length) {
+      return false;
+    }
+
+    final url = linePrefix.substring(lastMatch.start, lastMatch.end);
+    final absoluteStart = lineOffset + lastMatch.start;
+    final absoluteEnd = lineOffset + lastMatch.end;
+    if (_isUrlAlreadyLinked(text, absoluteStart, absoluteEnd)) {
+      return false;
+    }
+
+    final markdown = '[$url]($url)';
+    final replaced = text.replaceRange(absoluteStart, absoluteEnd, markdown);
+    final insertAt = absoluteStart + markdown.length;
+    final next = replaced.replaceRange(insertAt, insertAt, '\n');
+    _controller.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: insertAt + 1),
+    );
+    ref
+        .read(quickMemoControllerProvider.notifier)
+        .updateContent(_controller.text);
+    return true;
+  }
+
+  bool _isUrlAlreadyLinked(String text, int start, int end) {
+    if (start >= 2 && text.substring(start - 2, start) == '](') {
+      return true;
+    }
+    if (start >= 1 &&
+        end < text.length &&
+        text[start - 1] == '<' &&
+        text[end] == '>') {
+      return true;
+    }
+    return false;
+  }
+
+  String? _extractUrlFromSelection(EditableTextState editableTextState) {
+    final selection = editableTextState.textEditingValue.selection;
+    final text = editableTextState.textEditingValue.text;
+    if (!selection.isValid) return null;
+    if (!selection.isCollapsed) {
+      final selected = text.substring(selection.start, selection.end);
+      final match = _urlPattern.firstMatch(selected);
+      return match?.group(0);
+    }
+    final cursor = selection.baseOffset;
+    if (cursor < 0) return null;
+    for (final match in _urlPattern.allMatches(text)) {
+      if (match.start <= cursor && cursor <= match.end) {
+        return match.group(0);
+      }
+    }
+    return null;
+  }
+
+  Future<void> _copyUrl(String url) async {
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('URLをコピーしました。')));
+  }
+
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('URLが不正です。')));
+      return;
+    }
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('ブラウザで開けませんでした。')));
+    }
+  }
+
+  Future<void> _addImageAttachment() async {
+    final note = await _requireDraftNote();
+    if (note == null) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+    );
+    if (!mounted || result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('画像の取得に失敗しました。')));
+      return;
+    }
+    final repo = ref.read(attachmentRepositoryProvider);
+    final attachment = await repo.addImageAttachmentFromFile(
+      noteId: note.uuid,
+      file: File(path),
+    );
+    if (attachment == null && mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('画像の追加に失敗しました。')));
+    }
+  }
+
+  Future<List<AiImageInput>> _collectAiImages(
+    Note note, {
+    NoteAttachment? overrideAttachment,
+  }) async {
+    if (!_aiImageContextEnabled) return const [];
+    final limit = ref.read(appSettingsProvider).aiImageSendLimit;
+    if (limit <= 0) return const [];
+    final source = overrideAttachment != null
+        ? [overrideAttachment]
+        : note.attachments;
+    final targets = source.take(limit).toList();
+    final images = <AiImageInput>[];
+    for (final attachment in targets) {
+      final path = attachment.localPath;
+      if (path.isEmpty) continue;
+      final file = File(path);
+      if (!await file.exists()) continue;
+      final bytes = await file.readAsBytes();
+      final mime = attachment.mimeType.isNotEmpty
+          ? attachment.mimeType
+          : 'image/webp';
+      images.add(AiImageInput(bytes: bytes, mimeType: mime));
+    }
+    return images;
+  }
+
+  Future<void> _showAttachmentMenu(
+    Note note,
+    NoteAttachment attachment,
+    Offset position,
+  ) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromPoints(position, position),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(value: 'ai', child: Text('AI編集…')),
+      ],
+    );
+    if (!mounted || selected == null) return;
+    if (selected == 'ai') {
+      _openAiEditDialog(note: note, imageOverride: attachment);
+    }
+  }
+
+  Widget _buildAiImageToggleRow(AppSettings settings) {
+    final muted = Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '画像をAIに含める（上限${settings.aiImageSendLimit}枚）',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+            Switch(
+              value: _aiImageContextEnabled,
+              onChanged: (value) =>
+                  setState(() => _aiImageContextEnabled = value),
+            ),
+          ],
+        ),
+        Text('注意: 画像を送信するとAPIコストが増える可能性があります。', style: muted),
+      ],
+    );
+  }
+
+  Widget _buildAttachmentSection(Note? note) {
+    final attachments = note?.attachments ?? const <NoteAttachment>[];
+    if (attachments.isEmpty) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: _addImageAttachment,
+          icon: const Icon(Icons.add_photo_alternate_outlined),
+          label: const Text('画像を追加'),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('添付画像', style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(width: 8),
+            TextButton.icon(
+              onPressed: _addImageAttachment,
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              label: const Text('追加'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 120,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: attachments.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, index) {
+              final attachment = attachments[index];
+              final file = File(attachment.localPath);
+              return GestureDetector(
+                onSecondaryTapDown: (details) => note == null
+                    ? null
+                    : _showAttachmentMenu(
+                        note,
+                        attachment,
+                        details.globalPosition,
+                      ),
+                onLongPressStart: (details) => note == null
+                    ? null
+                    : _showAttachmentMenu(
+                        note,
+                        attachment,
+                        details.globalPosition,
+                      ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                    width: 160,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
+                      ),
+                      child: Image.file(
+                        file,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Center(
+                          child: Icon(Icons.broken_image_outlined),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTextContextMenu(
+    BuildContext context,
+    EditableTextState editableTextState,
+  ) {
+    final url = _extractUrlFromSelection(editableTextState);
+    final items = <ContextMenuButtonItem>[
+      if (url != null) ...[
+        ContextMenuButtonItem(
+          label: 'URLをコピー',
+          onPressed: () {
+            editableTextState.hideToolbar();
+            _copyUrl(url);
+          },
+        ),
+        ContextMenuButtonItem(
+          label: 'ブラウザで表示',
+          onPressed: () {
+            editableTextState.hideToolbar();
+            _openUrl(url);
+          },
+        ),
+      ],
+      ...editableTextState.contextMenuButtonItems,
+    ];
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: editableTextState.contextMenuAnchors,
+      buttonItems: items,
+    );
   }
 
   @override
@@ -405,8 +742,10 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   }
 
   Future<void> _openAiEditDialog({
+    required Note note,
     AiPromptPreset? preset,
     AiEditScope? scopeOverride,
+    NoteAttachment? imageOverride,
   }) async {
     final settings = ref.read(appSettingsProvider);
     if (!settings.aiEnabled) return;
@@ -464,12 +803,17 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       hasSelection: treatAsSelection,
     );
 
+    final images = await _collectAiImages(
+      note,
+      overrideAttachment: imageOverride,
+    );
     final result = await showDialog<String>(
       context: context,
       barrierDismissible: false,
       builder: (_) => AiEditDialog(
         targetText: target.originalText,
         targetLabel: targetLabel,
+        images: images,
         previewEnabled: settings.aiPreviewEnabled,
         sendKey: settings.aiPromptSendKey,
         initialPrompt: preset?.prompt,
@@ -614,13 +958,24 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                   onSelect: (preset, index) {
                     if (!settings.aiEnabled) return;
                     if (settings.aiPreviewEnabled) {
-                      _openAiEditDialog(
-                        preset: preset,
-                        scopeOverride: _promptScope,
-                      );
+                      _requireDraftNote().then((note) {
+                        if (note == null) return;
+                        _openAiEditDialog(
+                          note: note,
+                          preset: preset,
+                          scopeOverride: _promptScope,
+                        );
+                      });
                       return;
                     }
-                    _runInlineAiEdit(preset, index);
+                    _requireDraftNote().then((note) {
+                      if (note == null) return;
+                      _runInlineAiEdit(
+                        preset,
+                        index,
+                        note: note,
+                      );
+                    });
                   },
                 ),
               ),
@@ -658,7 +1013,11 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                   message: settings.aiEnabled ? 'AI編集' : 'AI編集は設定で有効化してください',
                   child: IconButton(
                     onPressed: settings.aiEnabled
-                        ? () => _openAiEditDialog()
+                        ? () async {
+                            final note = await _requireDraftNote();
+                            if (note == null) return;
+                            _openAiEditDialog(note: note);
+                          }
                         : null,
                     icon: const Icon(Icons.auto_fix_high),
                   ),
@@ -673,6 +1032,10 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
+            _buildAiImageToggleRow(settings),
+            const SizedBox(height: 4),
+            _buildAttachmentSection(draftNote),
+            const SizedBox(height: 8),
             if (hasTagBar)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
@@ -708,17 +1071,33 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
             Expanded(
               child: Stack(
                 children: [
-                  TextField(
-                    controller: _controller,
-                    focusNode: _focusNode,
-                    maxLines: null,
-                    expands: true,
-                    textAlign: TextAlign.left,
-                    textAlignVertical: TextAlignVertical.top,
-                    decoration: appInputDecoration(hintText: 'クイックメモを書く…'),
-                    onChanged: (value) => ref
-                        .read(quickMemoControllerProvider.notifier)
-                        .updateContent(value),
+                  Focus(
+                    onKeyEvent: (node, event) {
+                      if (_handleEnterKey(event)) {
+                        return KeyEventResult.handled;
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: TextField(
+                      controller: _controller,
+                      focusNode: _focusNode,
+                      maxLines: null,
+                      expands: true,
+                      textAlign: TextAlign.left,
+                      textAlignVertical: TextAlignVertical.top,
+                      decoration: appInputDecoration(
+                        hintText: 'クイックメモを書く…',
+                      ),
+                      onChanged: (value) => ref
+                          .read(quickMemoControllerProvider.notifier)
+                          .updateContent(value),
+                      contextMenuBuilder: (context, editableTextState) {
+                        return _buildTextContextMenu(
+                          context,
+                          editableTextState,
+                        );
+                      },
+                    ),
                   ),
                   if (settings.charCountEnabled)
                     Positioned(

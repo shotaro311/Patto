@@ -148,11 +148,14 @@ class _KeyBindingCaptureDialogState extends State<_KeyBindingCaptureDialog> {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _aiKeyController = TextEditingController();
+  final _aiImageLimitController = TextEditingController();
+  final _aiImageLimitFocus = FocusNode();
   final _presetNameControllers =
       List<TextEditingController>.generate(6, (_) => TextEditingController());
   final _presetPromptControllers =
       List<TextEditingController>.generate(6, (_) => TextEditingController());
   Timer? _presetDebounce;
+  Timer? _aiImageLimitDebounce;
   var _aiKeyVisible = false;
   var _aiKeyRegistered = false;
   var _syncing = false;
@@ -161,6 +164,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   void initState() {
     super.initState();
     _syncPresetControllers(ref.read(appSettingsProvider).aiPromptPresets);
+    _aiImageLimitController.text =
+        ref.read(appSettingsProvider).aiImageSendLimit.toString();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final repo = ref.read(aiKeyRepositoryProvider);
       final key = await repo.readKey();
@@ -175,6 +180,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   void dispose() {
     _aiKeyController.dispose();
+    _aiImageLimitDebounce?.cancel();
+    _aiImageLimitController.dispose();
+    _aiImageLimitFocus.dispose();
     for (final controller in _presetNameControllers) {
       controller.dispose();
     }
@@ -210,6 +218,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
       );
       ref.read(appSettingsProvider.notifier).setAiPromptPresets(presets);
+    });
+  }
+
+  void _syncAiImageLimit(int limit) {
+    if (_aiImageLimitFocus.hasFocus) return;
+    final next = limit.toString();
+    if (_aiImageLimitController.text != next) {
+      _aiImageLimitController.text = next;
+    }
+  }
+
+  void _scheduleAiImageLimitSave(String raw) {
+    _aiImageLimitDebounce?.cancel();
+    _aiImageLimitDebounce = Timer(const Duration(milliseconds: 300), () {
+      final parsed = int.tryParse(raw.trim());
+      if (parsed == null) return;
+      ref.read(appSettingsProvider.notifier).setAiImageSendLimit(parsed);
     });
   }
 
@@ -431,6 +456,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(appSettingsProvider);
+    _syncAiImageLimit(settings.aiImageSendLimit);
     final supabaseConfig = ref.watch(supabaseConfigProvider);
     final userIdAsync = ref.watch(authUserIdStreamProvider);
     final pendingConflicts = ref.watch(syncConflictsProvider);
@@ -629,6 +655,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 .read(appSettingsProvider.notifier)
                 .setAiPreviewEnabled(v),
           ),
+          ListTile(
+            title: const Text('AIに送る画像の最大枚数'),
+            subtitle: const Text('メモ上部のトグルがONのときに適用'),
+            trailing: SizedBox(
+              width: 72,
+              child: TextField(
+                controller: _aiImageLimitController,
+                focusNode: _aiImageLimitFocus,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: appInputDecoration(isDense: true, hintText: '例: 3'),
+                onChanged: _scheduleAiImageLimitSave,
+              ),
+            ),
+          ),
           if (Platform.isMacOS)
             ListTile(
               title: const Text('AI編集ショートカット（アプリ内）'),
@@ -691,6 +732,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const Text(
             '注意: AI文章編集では、選択した本文がAIへ送信されます。',
+          ),
+          const Text(
+            '注意: 画像を含めるとAI APIコストが増える可能性があります。',
           ),
           const SizedBox(height: 8),
           TextField(

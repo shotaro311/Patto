@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:image/image.dart' as img;
 
 import '../core/config/env.dart';
 import 'ai_key_repository.dart';
@@ -12,6 +14,22 @@ class AiService {
 
   final AiKeyRepository _keyRepository;
   final AppleIntelligenceClient _appleClient;
+
+  Future<String> editTextWithImages({
+    required String instruction,
+    required String originalText,
+    required List<AiImageInput> images,
+    required bool useAppleIntelligence,
+    required bool useExternalApi,
+  }) {
+    return _editTextInternal(
+      instruction: instruction,
+      originalText: originalText,
+      images: images,
+      useAppleIntelligence: useAppleIntelligence,
+      useExternalApi: useExternalApi,
+    );
+  }
 
   Future<AppleIntelligenceAvailability> checkAppleIntelligenceAvailability() {
     return _appleClient.checkAvailability();
@@ -143,9 +161,36 @@ class AiService {
     required bool useAppleIntelligence,
     required bool useExternalApi,
   }) async {
+    return _editTextInternal(
+      instruction: instruction,
+      originalText: originalText,
+      images: const [],
+      useAppleIntelligence: useAppleIntelligence,
+      useExternalApi: useExternalApi,
+    );
+  }
+
+  Future<String> _editTextInternal({
+    required String instruction,
+    required String originalText,
+    required List<AiImageInput> images,
+    required bool useAppleIntelligence,
+    required bool useExternalApi,
+  }) async {
     if (useAppleIntelligence) {
       final availability = await _appleClient.checkAvailability();
       if (availability.isAvailable) {
+        if (images.isNotEmpty && useExternalApi) {
+          try {
+            return await _editTextWithExternalImages(
+              instruction: instruction,
+              originalText: originalText,
+              images: images,
+            );
+          } catch (_) {
+            // Fallback to Apple Intelligence when external API fails.
+          }
+        }
         try {
           return await _appleClient.editText(
             instruction: instruction,
@@ -153,29 +198,50 @@ class AiService {
           );
         } on PlatformException catch (e) {
           if (useExternalApi) {
-            return _editTextWithExternal(
+            return _editTextWithExternalMaybeImages(
               instruction: instruction,
               originalText: originalText,
+              images: images,
             );
           }
           throw AiException(_platformExceptionToMessage(e));
         }
       }
       if (useExternalApi) {
-        return _editTextWithExternal(
+        return _editTextWithExternalMaybeImages(
           instruction: instruction,
           originalText: originalText,
+          images: images,
         );
       }
       throw AiException(availability.localizedMessage);
     }
     if (useExternalApi) {
+      return _editTextWithExternalMaybeImages(
+        instruction: instruction,
+        originalText: originalText,
+        images: images,
+      );
+    }
+    throw const AiException('AIが有効化されていません。設定を確認してください');
+  }
+
+  Future<String> _editTextWithExternalMaybeImages({
+    required String instruction,
+    required String originalText,
+    required List<AiImageInput> images,
+  }) {
+    if (images.isEmpty) {
       return _editTextWithExternal(
         instruction: instruction,
         originalText: originalText,
       );
     }
-    throw const AiException('AIが有効化されていません。設定を確認してください');
+    return _editTextWithExternalImages(
+      instruction: instruction,
+      originalText: originalText,
+      images: images,
+    );
   }
 
   Future<String> _editTextWithExternal({
@@ -189,7 +255,59 @@ class AiService {
 
     final model = GenerativeModel(model: Env.aiModelName, apiKey: apiKey);
 
-    final prompt = [
+    final prompt = _buildEditPrompt(
+      instruction: instruction,
+      originalText: originalText,
+    );
+    final response = await model.generateContent([Content.text(prompt)]);
+    final text = response.text?.trim();
+    if (text == null || text.isEmpty) {
+      throw const AiException('AIの応答が空でした');
+    }
+    return text;
+  }
+
+  Future<String> _editTextWithExternalImages({
+    required String instruction,
+    required String originalText,
+    required List<AiImageInput> images,
+  }) async {
+    final apiKey = await _keyRepository.readKey();
+    if (apiKey == null || apiKey.isEmpty) {
+      throw const AiException('AI APIキーが未設定です');
+    }
+
+    final normalized = _normalizeImageInputs(images);
+    if (normalized.isEmpty) {
+      return _editTextWithExternal(
+        instruction: instruction,
+        originalText: originalText,
+      );
+    }
+
+    final model = GenerativeModel(model: Env.aiModelName, apiKey: apiKey);
+    final prompt = _buildEditPrompt(
+      instruction: instruction,
+      originalText: originalText,
+    );
+    final parts = <Part>[TextPart(prompt)];
+    for (final image in normalized) {
+      parts.add(DataPart(image.mimeType, image.bytes));
+    }
+
+    final response = await model.generateContent([Content.multi(parts)]);
+    final text = response.text?.trim();
+    if (text == null || text.isEmpty) {
+      throw const AiException('AIの応答が空でした');
+    }
+    return text;
+  }
+
+  String _buildEditPrompt({
+    required String instruction,
+    required String originalText,
+  }) {
+    return [
       'あなたは文章編集アシスタントです。',
       'ユーザーの指示に従って文章を編集してください。',
       '出力は編集後の本文のみ（説明や前置きは不要）です。',
@@ -200,13 +318,28 @@ class AiService {
       '【本文】',
       originalText,
     ].join('\n');
+  }
 
-    final response = await model.generateContent([Content.text(prompt)]);
-    final text = response.text?.trim();
-    if (text == null || text.isEmpty) {
-      throw const AiException('AIの応答が空でした');
+  List<AiImageInput> _normalizeImageInputs(List<AiImageInput> images) {
+    final normalized = <AiImageInput>[];
+    for (final image in images) {
+      if (image.bytes.isEmpty) continue;
+      if (image.mimeType == 'image/png' ||
+          image.mimeType == 'image/jpeg') {
+        normalized.add(image);
+        continue;
+      }
+      final decoded = img.decodeImage(image.bytes);
+      if (decoded == null) continue;
+      final png = img.encodePng(decoded);
+      normalized.add(
+        AiImageInput(
+          bytes: Uint8List.fromList(png),
+          mimeType: 'image/png',
+        ),
+      );
     }
-    return text;
+    return normalized;
   }
 
   String _extractJsonObject(String raw) {
@@ -245,6 +378,16 @@ class AiService {
       _ => e.message ?? 'Apple Intelligenceでエラーが発生しました',
     };
   }
+}
+
+class AiImageInput {
+  const AiImageInput({
+    required this.bytes,
+    required this.mimeType,
+  });
+
+  final Uint8List bytes;
+  final String mimeType;
 }
 
 class AiException implements Exception {

@@ -114,6 +114,7 @@ class AppSettings {
     required this.aiEditKeyBinding,
     required this.aiPromptSendKey,
     required this.aiPromptPresets,
+    required this.aiImageSendLimit,
     required this.lastOpenedNoteId,
     required this.lastSyncAt,
   });
@@ -131,6 +132,7 @@ class AppSettings {
   final MacKeyBinding? aiEditKeyBinding;
   final AiPromptSendKey aiPromptSendKey;
   final List<AiPromptPreset> aiPromptPresets;
+  final int aiImageSendLimit;
   final String? lastOpenedNoteId;
   final DateTime? lastSyncAt;
 
@@ -149,6 +151,7 @@ class AppSettings {
     Object? aiEditKeyBinding = _unset,
     AiPromptSendKey? aiPromptSendKey,
     List<AiPromptPreset>? aiPromptPresets,
+    int? aiImageSendLimit,
     Object? lastOpenedNoteId = _unset,
     Object? lastSyncAt = _unset,
   }) {
@@ -173,6 +176,7 @@ class AppSettings {
           : aiEditKeyBinding as MacKeyBinding?,
       aiPromptSendKey: aiPromptSendKey ?? this.aiPromptSendKey,
       aiPromptPresets: aiPromptPresets ?? this.aiPromptPresets,
+      aiImageSendLimit: aiImageSendLimit ?? this.aiImageSendLimit,
       lastOpenedNoteId: identical(lastOpenedNoteId, _unset)
           ? this.lastOpenedNoteId
           : lastOpenedNoteId as String?,
