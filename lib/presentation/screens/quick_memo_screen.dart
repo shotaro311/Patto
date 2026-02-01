@@ -445,7 +445,8 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: attachments.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            separatorBuilder: (context, index) =>
+                const SizedBox(width: 8),
             itemBuilder: (context, index) {
               final attachment = attachments[index];
               final file = File(attachment.localPath);
@@ -477,9 +478,10 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                       child: Image.file(
                         file,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => const Center(
-                          child: Icon(Icons.broken_image_outlined),
-                        ),
+                        errorBuilder: (context, error, stackTrace) =>
+                            const Center(
+                              child: Icon(Icons.broken_image_outlined),
+                            ),
                       ),
                     ),
                   ),
@@ -807,6 +809,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       note,
       overrideAttachment: imageOverride,
     );
+    if (!mounted) return;
     final result = await showDialog<String>(
       context: context,
       barrierDismissible: false,

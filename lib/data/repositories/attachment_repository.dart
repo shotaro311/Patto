@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 import 'package:isar/isar.dart';
+import 'package:swipelab_webp/swipelab_webp.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/note.dart';
@@ -39,7 +40,16 @@ class AttachmentRepository {
     final decoded = img.decodeImage(bytes);
     if (decoded == null) return null;
 
-    final webpBytes = img.encodeWebp(decoded, quality: 80);
+    final rgba = decoded.getBytes(order: img.ChannelOrder.rgba);
+    final webpBytes = encodeWebP(
+      WebPEncodeInput(
+        rgba: rgba,
+        width: decoded.width,
+        height: decoded.height,
+        quality: 80,
+      ),
+    );
+    if (webpBytes == null) return null;
     final attachmentId = _uuid.v4();
     final file = await _storage.saveWebpImage(
       noteUuid: noteId,
