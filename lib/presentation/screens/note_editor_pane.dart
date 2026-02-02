@@ -26,6 +26,7 @@ import '../widgets/animated_dots_text.dart';
 import '../widgets/ai_prompt_presets_hover_menu.dart';
 import '../widgets/reorderable_icon_toolbar.dart';
 import '../widgets/top_right_toast.dart';
+import '../widgets/inline_attachment_controller.dart';
 
 class NoteEditorPane extends ConsumerStatefulWidget {
   const NoteEditorPane({super.key, required this.noteId});
@@ -46,7 +47,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   static final RegExp _urlPattern = RegExp(r'https?://[^\s)>\"]+');
   final _focusNode = FocusNode();
   final _titleFocusNode = FocusNode();
-  late final TextEditingController _controller;
+  late final InlineAttachmentEditingController _controller;
   late final TextEditingController _titleController;
   late final ExternalPasteGuard _externalPasteGuard;
   ProviderSubscription<int>? _quickLaunchSub;
@@ -71,6 +72,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   String _lastScopeKey = '';
   bool _aiImageContextEnabled = false;
   bool _isDragOver = false;
+  Note? _attachmentNote;
 
   int _countText(String text, bool excludeSymbols) {
     if (!excludeSymbols) return text.runes.length;
@@ -214,7 +216,16 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController();
+    _controller = InlineAttachmentEditingController(
+      attachmentBuilder: (context, attachment) {
+        final note = _attachmentNote;
+        return _buildInlineAttachment(
+          context,
+          note,
+          attachment,
+        );
+      },
+    );
     _titleController = TextEditingController();
     _externalPasteGuard = ExternalPasteGuard(
       controller: _controller,
@@ -923,74 +934,56 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   }
 
   Widget _buildAttachmentSection(Note note) {
-    final attachments = note.attachments;
-    if (attachments.isEmpty) {
-      return Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
+    return Row(
+      children: [
+        Text('添付画像', style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(width: 8),
+        TextButton.icon(
           onPressed: () => _addImageAttachment(note),
           icon: const Icon(Icons.add_photo_alternate_outlined),
-          label: const Text('画像を追加'),
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text('添付画像', style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(width: 8),
-            TextButton.icon(
-              onPressed: () => _addImageAttachment(note),
-              icon: const Icon(Icons.add_photo_alternate_outlined),
-              label: const Text('追加'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        SizedBox(
-          height: 120,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: attachments.length,
-            separatorBuilder: (context, index) =>
-                const SizedBox(width: 8),
-            itemBuilder: (context, index) {
-              final attachment = attachments[index];
-              final file = File(attachment.localPath);
-              return GestureDetector(
-                onSecondaryTapDown: (details) =>
-                    _showAttachmentMenu(note, attachment, details.globalPosition),
-                onLongPressStart: (details) =>
-                    _showAttachmentMenu(note, attachment, details.globalPosition),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: SizedBox(
-                    width: 160,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                      ),
-                      child: Image.file(
-                        file,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) =>
-                            const Center(
-                              child: Icon(Icons.broken_image_outlined),
-                            ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
+          label: const Text('追加'),
         ),
       ],
+    );
+  }
+
+  Widget _buildInlineAttachment(
+    BuildContext context,
+    Note? note,
+    NoteAttachment attachment,
+  ) {
+    final file = File(attachment.localPath);
+    return GestureDetector(
+      onSecondaryTapDown: (details) {
+        if (note == null) return;
+        _showAttachmentMenu(note, attachment, details.globalPosition);
+      },
+      onLongPressStart: (details) {
+        if (note == null) return;
+        _showAttachmentMenu(note, attachment, details.globalPosition);
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            child: Image.file(
+              file,
+              width: 160,
+              height: 120,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => const SizedBox(
+                width: 160,
+                height: 120,
+                child: Center(child: Icon(Icons.broken_image_outlined)),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1106,6 +1099,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
             note.autoTags.isNotEmpty ||
             suggestions.isNotEmpty ||
             _aiTagSuggesting;
+
+        _attachmentNote = note;
+        _controller.setAttachments(note.attachments);
 
         final body = Column(
           children: [

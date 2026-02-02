@@ -22,6 +22,7 @@ import '../providers/tag_dictionary_repository_provider.dart';
 import '../widgets/app_input_decoration.dart';
 import '../widgets/ai_prompt_presets_hover_menu.dart';
 import '../widgets/reorderable_icon_toolbar.dart';
+import '../widgets/inline_attachment_controller.dart';
 import 'external_paste_guard.dart';
 import 'note_editor_pane.dart';
 
@@ -38,7 +39,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   static final RegExp _symbolPattern = RegExp(r'[\p{P}\p{S}]', unicode: true);
   static final RegExp _urlPattern = RegExp(r'https?://[^\s)>\"]+');
   final _focusNode = FocusNode();
-  final _controller = TextEditingController();
+  late final InlineAttachmentEditingController _controller;
   late final ExternalPasteGuard _externalPasteGuard;
   String _lastLoaded = '';
   ProviderSubscription<int>? _quickLaunchSub;
@@ -501,84 +502,57 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   }
 
   Widget _buildAttachmentSection(Note? note) {
-    final attachments = note?.attachments ?? const <NoteAttachment>[];
-    if (attachments.isEmpty) {
-      return Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
+    return Row(
+      children: [
+        Text('添付画像', style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(width: 8),
+        TextButton.icon(
           onPressed: _addImageAttachment,
           icon: const Icon(Icons.add_photo_alternate_outlined),
-          label: const Text('画像を追加'),
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text('添付画像', style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(width: 8),
-            TextButton.icon(
-              onPressed: _addImageAttachment,
-              icon: const Icon(Icons.add_photo_alternate_outlined),
-              label: const Text('追加'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        SizedBox(
-          height: 120,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: attachments.length,
-            separatorBuilder: (context, index) =>
-                const SizedBox(width: 8),
-            itemBuilder: (context, index) {
-              final attachment = attachments[index];
-              final file = File(attachment.localPath);
-              return GestureDetector(
-                onSecondaryTapDown: (details) => note == null
-                    ? null
-                    : _showAttachmentMenu(
-                        note,
-                        attachment,
-                        details.globalPosition,
-                      ),
-                onLongPressStart: (details) => note == null
-                    ? null
-                    : _showAttachmentMenu(
-                        note,
-                        attachment,
-                        details.globalPosition,
-                      ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: SizedBox(
-                    width: 160,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                      ),
-                      child: Image.file(
-                        file,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) =>
-                            const Center(
-                              child: Icon(Icons.broken_image_outlined),
-                            ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
+          label: const Text('追加'),
         ),
       ],
+    );
+  }
+
+  Widget _buildInlineAttachment(
+    BuildContext context,
+    NoteAttachment attachment,
+  ) {
+    final file = File(attachment.localPath);
+    return GestureDetector(
+      onSecondaryTapDown: (details) async {
+        final note = await _requireDraftNote(allowEmpty: true);
+        if (note == null) return;
+        _showAttachmentMenu(note, attachment, details.globalPosition);
+      },
+      onLongPressStart: (details) async {
+        final note = await _requireDraftNote(allowEmpty: true);
+        if (note == null) return;
+        _showAttachmentMenu(note, attachment, details.globalPosition);
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            child: Image.file(
+              file,
+              width: 160,
+              height: 120,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => const SizedBox(
+                width: 160,
+                height: 120,
+                child: Center(child: Icon(Icons.broken_image_outlined)),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -615,6 +589,11 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   @override
   void initState() {
     super.initState();
+    _controller = InlineAttachmentEditingController(
+      attachmentBuilder: (context, attachment) {
+        return _buildInlineAttachment(context, attachment);
+      },
+    );
     _externalPasteGuard = ExternalPasteGuard(
       controller: _controller,
       focusNode: _focusNode,
@@ -1030,6 +1009,8 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
         (draftNote?.autoTags.isNotEmpty ?? false) ||
         _aiSuggestedTags.isNotEmpty ||
         _aiTagSuggesting;
+
+    _controller.setAttachments(draftNote?.attachments ?? const []);
 
     return Scaffold(
       appBar: AppBar(
