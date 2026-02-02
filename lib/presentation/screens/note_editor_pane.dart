@@ -766,17 +766,21 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     );
     if (attachment == null && mounted) {
       showTopRightToast(context, '画像の追加に失敗しました。');
+      return;
+    }
+    if (attachment != null) {
+      _insertAttachmentToken(attachment.id);
     }
   }
 
-  Future<void> _addImageAttachmentFromPath(
+  Future<NoteAttachment?> _addImageAttachmentFromPath(
     Note note,
     String path, {
     Uint8List? bookmark,
   }) async {
-    if (!_isSupportedImagePath(path)) return;
+    if (!_isSupportedImagePath(path)) return null;
     final file = File(path);
-    if (!await file.exists()) return;
+    if (!await file.exists()) return null;
 
     var accessGranted = false;
     if (bookmark != null && bookmark.isNotEmpty) {
@@ -785,7 +789,12 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     }
     try {
       final repo = ref.read(attachmentRepositoryProvider);
-      await repo.addImageAttachmentFromFile(noteId: note.uuid, file: file);
+      final attachment =
+          await repo.addImageAttachmentFromFile(noteId: note.uuid, file: file);
+      if (attachment != null) {
+        _insertAttachmentToken(attachment.id);
+      }
+      return attachment;
     } finally {
       if (bookmark != null && bookmark.isNotEmpty && accessGranted) {
         await DesktopDrop.instance
@@ -803,17 +812,34 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
         unsupported++;
         continue;
       }
-      await _addImageAttachmentFromPath(
+      final attachment = await _addImageAttachmentFromPath(
         note,
         item.path,
         bookmark: item.extraAppleBookmark,
       );
-      added++;
+      if (attachment != null) {
+        added++;
+      }
     }
     if (!mounted) return;
     if (added == 0 && unsupported > 0) {
       showTopRightToast(context, '対応形式は png / jpeg / webp です。');
     }
+  }
+
+  void _insertAttachmentToken(String attachmentId) {
+    final token = '![image](attachment:$attachmentId)';
+    final current = _controller.text;
+    final selection = _controller.selection;
+    final start = selection.isValid ? selection.start : current.length;
+    final end = selection.isValid ? selection.end : current.length;
+    final insert = '$token\n';
+    final next = current.replaceRange(start, end, insert);
+    _controller.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + insert.length),
+    );
+    _scheduleSave();
   }
 
   Future<List<AiImageInput>> _collectAiImages(
