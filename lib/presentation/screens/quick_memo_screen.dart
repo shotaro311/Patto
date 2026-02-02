@@ -520,39 +520,55 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     NoteAttachment attachment,
   ) {
     final file = File(attachment.localPath);
-    return GestureDetector(
-      onSecondaryTapDown: (details) async {
-        final note = await _requireDraftNote(allowEmpty: true);
-        if (note == null) return;
-        _showAttachmentMenu(note, attachment, details.globalPosition);
-      },
-      onLongPressStart: (details) async {
-        final note = await _requireDraftNote(allowEmpty: true);
-        if (note == null) return;
-        _showAttachmentMenu(note, attachment, details.globalPosition);
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            ),
-            child: Image.file(
-              file,
-              width: 160,
-              height: 120,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) => const SizedBox(
-                width: 160,
-                height: 120,
-                child: Center(child: Icon(Icons.broken_image_outlined)),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite && constraints.maxWidth > 0
+            ? constraints.maxWidth
+            : MediaQuery.of(context).size.width;
+        return SizedBox(
+          width: width,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: GestureDetector(
+              onSecondaryTapDown: (details) async {
+                final note = await _requireDraftNote(allowEmpty: true);
+                if (note == null) return;
+                _showAttachmentMenu(note, attachment, details.globalPosition);
+              },
+              onLongPressStart: (details) async {
+                final note = await _requireDraftNote(allowEmpty: true);
+                if (note == null) return;
+                _showAttachmentMenu(note, attachment, details.globalPosition);
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest,
+                    ),
+                    child: Image.file(
+                      file,
+                      width: 160,
+                      height: 120,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) =>
+                          const SizedBox(
+                        width: 160,
+                        height: 120,
+                        child: Center(child: Icon(Icons.broken_image_outlined)),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
