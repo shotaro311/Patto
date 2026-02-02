@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -69,6 +70,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   AiEditScope _promptScope = AiEditScope.full;
   String _lastScopeKey = '';
   bool _aiImageContextEnabled = false;
+  bool _isDragOver = false;
 
   int _countText(String text, bool excludeSymbols) {
     if (!excludeSymbols) return text.runes.length;
@@ -650,6 +652,14 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     return _convertUrlBeforeEnter();
   }
 
+  bool _isSupportedImagePath(String path) {
+    final lower = path.toLowerCase();
+    return lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.webp');
+  }
+
   bool _convertUrlBeforeEnter() {
     final selection = _controller.selection;
     if (!selection.isValid || !selection.isCollapsed) return false;
@@ -739,7 +749,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
 
   Future<void> _addImageAttachment(Note note) async {
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
+      type: FileType.custom,
+      allowedExtensions: const ['png', 'jpg', 'jpeg', 'webp'],
       allowMultiple: false,
     );
     if (!mounted || result == null || result.files.isEmpty) return;
@@ -755,6 +766,53 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     );
     if (attachment == null && mounted) {
       showTopRightToast(context, '画像の追加に失敗しました。');
+    }
+  }
+
+  Future<void> _addImageAttachmentFromPath(
+    Note note,
+    String path, {
+    Uint8List? bookmark,
+  }) async {
+    if (!_isSupportedImagePath(path)) return;
+    final file = File(path);
+    if (!await file.exists()) return;
+
+    var accessGranted = false;
+    if (bookmark != null && bookmark.isNotEmpty) {
+      accessGranted = await DesktopDrop.instance
+          .startAccessingSecurityScopedResource(bookmark: bookmark);
+    }
+    try {
+      final repo = ref.read(attachmentRepositoryProvider);
+      await repo.addImageAttachmentFromFile(noteId: note.uuid, file: file);
+    } finally {
+      if (bookmark != null && bookmark.isNotEmpty && accessGranted) {
+        await DesktopDrop.instance
+            .stopAccessingSecurityScopedResource(bookmark: bookmark);
+      }
+    }
+  }
+
+  Future<void> _handleDrop(Note note, List<DropItem> items) async {
+    var unsupported = 0;
+    var added = 0;
+    for (final item in items) {
+      if (item is DropItemDirectory) continue;
+      if (!_isSupportedImagePath(item.path)) {
+        unsupported++;
+        continue;
+      }
+      await _addImageAttachmentFromPath(
+        note,
+        item.path,
+        bookmark: item.extraAppleBookmark,
+      );
+      added++;
+    }
+    if (!mounted) return;
+    if (added == 0 && unsupported > 0) {
+      showTopRightToast(context, '対応形式は png / jpeg / webp です。');
     }
   }
 
@@ -1023,7 +1081,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
             suggestions.isNotEmpty ||
             _aiTagSuggesting;
 
-        return Column(
+        final body = Column(
           children: [
             Material(
               color: Theme.of(context).colorScheme.surface,
@@ -1296,6 +1354,37 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
               ),
             ),
           ],
+        );
+
+        return DropTarget(
+          onDragEntered: (_) => setState(() => _isDragOver = true),
+          onDragExited: (_) => setState(() => _isDragOver = false),
+          onDragDone: (details) async {
+            setState(() => _isDragOver = false);
+            await _handleDrop(note, details.files);
+          },
+          child: Stack(
+            children: [
+              body,
+              if (_isDragOver)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .primary
+                            .withValues(alpha: 0.08),
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.primary,
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         );
       },
       error: (e, _) => Center(child: Text('エラー: $e')),

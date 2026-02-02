@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -49,6 +50,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   AiEditScope _promptScope = AiEditScope.full;
   String _lastScopeKey = '';
   bool _aiImageContextEnabled = false;
+  bool _isDragOver = false;
   bool _aiTagSuggesting = false;
   int _aiTagSuggestToken = 0;
   List<String> _aiSuggestedTags = [];
@@ -212,6 +214,14 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     return _convertUrlBeforeEnter();
   }
 
+  bool _isSupportedImagePath(String path) {
+    final lower = path.toLowerCase();
+    return lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.webp');
+  }
+
   bool _convertUrlBeforeEnter() {
     final selection = _controller.selection;
     if (!selection.isValid || !selection.isCollapsed) return false;
@@ -309,10 +319,11 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   }
 
   Future<void> _addImageAttachment() async {
-    final note = await _requireDraftNote();
+    final note = await _requireDraftNote(allowEmpty: true);
     if (note == null) return;
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
+      type: FileType.custom,
+      allowedExtensions: const ['png', 'jpg', 'jpeg', 'webp'],
       allowMultiple: false,
     );
     if (!mounted || result == null || result.files.isEmpty) return;
@@ -333,6 +344,55 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('画像の追加に失敗しました。')));
+    }
+  }
+
+  Future<void> _addImageAttachmentFromPath(
+    Note note,
+    String path, {
+    Uint8List? bookmark,
+  }) async {
+    if (!_isSupportedImagePath(path)) return;
+    final file = File(path);
+    if (!await file.exists()) return;
+
+    var accessGranted = false;
+    if (bookmark != null && bookmark.isNotEmpty) {
+      accessGranted = await DesktopDrop.instance
+          .startAccessingSecurityScopedResource(bookmark: bookmark);
+    }
+    try {
+      final repo = ref.read(attachmentRepositoryProvider);
+      await repo.addImageAttachmentFromFile(noteId: note.uuid, file: file);
+    } finally {
+      if (bookmark != null && bookmark.isNotEmpty && accessGranted) {
+        await DesktopDrop.instance
+            .stopAccessingSecurityScopedResource(bookmark: bookmark);
+      }
+    }
+  }
+
+  Future<void> _handleDrop(Note note, List<DropItem> items) async {
+    var unsupported = 0;
+    var added = 0;
+    for (final item in items) {
+      if (item is DropItemDirectory) continue;
+      if (!_isSupportedImagePath(item.path)) {
+        unsupported++;
+        continue;
+      }
+      await _addImageAttachmentFromPath(
+        note,
+        item.path,
+        bookmark: item.extraAppleBookmark,
+      );
+      added++;
+    }
+    if (!mounted) return;
+    if (added == 0 && unsupported > 0) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('対応形式は png / jpeg / webp です。')));
     }
   }
 
@@ -608,9 +668,9 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     return TagDictionaryRepository.normalizeTag(value);
   }
 
-  Future<Note?> _requireDraftNote() async {
+  Future<Note?> _requireDraftNote({bool allowEmpty = false}) async {
     final controller = ref.read(quickMemoControllerProvider.notifier);
-    final note = await controller.ensureDraftExists();
+    final note = await controller.ensureDraftExists(allowEmpty: allowEmpty);
     if (note == null) {
       if (!mounted) return null;
       ScaffoldMessenger.of(
@@ -1031,106 +1091,137 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
           TextButton(onPressed: _save, child: const Text('保存')),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
+      body: DropTarget(
+        onDragEntered: (_) => setState(() => _isDragOver = true),
+        onDragExited: (_) => setState(() => _isDragOver = false),
+        onDragDone: (details) async {
+          setState(() => _isDragOver = false);
+          final note = await _requireDraftNote(allowEmpty: true);
+          if (note == null) return;
+          await _handleDrop(note, details.files);
+        },
+        child: Stack(
           children: [
-            _buildAiImageToggleRow(settings),
-            const SizedBox(height: 4),
-            _buildAttachmentSection(draftNote),
-            const SizedBox(height: 8),
-            if (hasTagBar)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    if (_aiTagSuggesting) const Chip(label: Text('AI提案中…')),
-                    if (draftNote != null)
-                      for (final tag in draftNote.manualTags)
-                        InputChip(
-                          label: Text('#${_normalizeTag(tag)}'),
-                          onDeleted: () => _removeManualTag(draftNote, tag),
-                        ),
-                    if (draftNote != null)
-                      for (final tag in draftNote.autoTags)
-                        InputChip(
-                          label: Text('#${_normalizeTag(tag)}'),
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.secondaryContainer,
-                          onDeleted: () => _removeAutoTag(draftNote, tag),
-                        ),
-                    if (draftNote != null)
-                      for (final tag in _aiSuggestedTags)
-                        ActionChip(
-                          label: Text('提案: #${_normalizeTag(tag)}'),
-                          onPressed: () => _applyAutoTag(draftNote, tag),
-                        ),
-                  ],
-                ),
-              ),
-            Expanded(
-              child: Stack(
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
                 children: [
-                  Focus(
-                    onKeyEvent: (node, event) {
-                      if (_handleEnterKey(event)) {
-                        return KeyEventResult.handled;
-                      }
-                      return KeyEventResult.ignored;
-                    },
-                    child: TextField(
-                      controller: _controller,
-                      focusNode: _focusNode,
-                      maxLines: null,
-                      expands: true,
-                      textAlign: TextAlign.left,
-                      textAlignVertical: TextAlignVertical.top,
-                      decoration: appInputDecoration(
-                        hintText: 'クイックメモを書く…',
+                  _buildAiImageToggleRow(settings),
+                  const SizedBox(height: 4),
+                  _buildAttachmentSection(draftNote),
+                  const SizedBox(height: 8),
+                  if (hasTagBar)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          if (_aiTagSuggesting) const Chip(label: Text('AI提案中…')),
+                          if (draftNote != null)
+                            for (final tag in draftNote.manualTags)
+                              InputChip(
+                                label: Text('#${_normalizeTag(tag)}'),
+                                onDeleted: () => _removeManualTag(draftNote, tag),
+                              ),
+                          if (draftNote != null)
+                            for (final tag in draftNote.autoTags)
+                              InputChip(
+                                label: Text('#${_normalizeTag(tag)}'),
+                                backgroundColor: Theme.of(
+                                  context,
+                                ).colorScheme.secondaryContainer,
+                                onDeleted: () => _removeAutoTag(draftNote, tag),
+                              ),
+                          if (draftNote != null)
+                            for (final tag in _aiSuggestedTags)
+                              ActionChip(
+                                label: Text('提案: #${_normalizeTag(tag)}'),
+                                onPressed: () => _applyAutoTag(draftNote, tag),
+                              ),
+                        ],
                       ),
-                      onChanged: (value) => ref
-                          .read(quickMemoControllerProvider.notifier)
-                          .updateContent(value),
-                      contextMenuBuilder: (context, editableTextState) {
-                        return _buildTextContextMenu(
-                          context,
-                          editableTextState,
-                        );
-                      },
+                    ),
+                  Expanded(
+                    child: Stack(
+                      children: [
+                        Focus(
+                          onKeyEvent: (node, event) {
+                            if (_handleEnterKey(event)) {
+                              return KeyEventResult.handled;
+                            }
+                            return KeyEventResult.ignored;
+                          },
+                          child: TextField(
+                            controller: _controller,
+                            focusNode: _focusNode,
+                            maxLines: null,
+                            expands: true,
+                            textAlign: TextAlign.left,
+                            textAlignVertical: TextAlignVertical.top,
+                            decoration: appInputDecoration(
+                              hintText: 'クイックメモを書く…',
+                            ),
+                            onChanged: (value) => ref
+                                .read(quickMemoControllerProvider.notifier)
+                                .updateContent(value),
+                            contextMenuBuilder: (context, editableTextState) {
+                              return _buildTextContextMenu(
+                                context,
+                                editableTextState,
+                              );
+                            },
+                          ),
+                        ),
+                        if (settings.charCountEnabled)
+                          Positioned(
+                            right: 8,
+                            bottom: 6,
+                            child: ValueListenableBuilder<TextEditingValue>(
+                              valueListenable: _controller,
+                              builder: (context, value, _) {
+                                final count = _countText(
+                                  value.text,
+                                  settings.charCountExcludeSymbols,
+                                );
+                                final suffix = settings.charCountExcludeSymbols
+                                    ? '（記号含まず）'
+                                    : '';
+                                return Text(
+                                  '$count$suffix',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                      ),
+                                );
+                              },
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                  if (settings.charCountEnabled)
-                    Positioned(
-                      right: 8,
-                      bottom: 6,
-                      child: ValueListenableBuilder<TextEditingValue>(
-                        valueListenable: _controller,
-                        builder: (context, value, _) {
-                          final count = _countText(
-                            value.text,
-                            settings.charCountExcludeSymbols,
-                          );
-                          final suffix = settings.charCountExcludeSymbols
-                              ? '（記号含まず）'
-                              : '';
-                          return Text(
-                            '$count$suffix',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
-                                ),
-                          );
-                        },
-                      ),
-                    ),
                 ],
               ),
             ),
+            if (_isDragOver)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withValues(alpha: 0.08),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.primary,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

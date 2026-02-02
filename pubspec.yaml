@@ -49,6 +49,7 @@ dependencies:
   url_launcher: ^6.3.2
   image: ^4.7.2
   swipelab_webp: ^1.0.0
+  desktop_drop: ^0.7.0
 
 dev_dependencies:
   flutter_test:
