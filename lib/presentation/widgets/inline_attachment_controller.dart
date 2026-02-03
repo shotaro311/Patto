@@ -28,10 +28,14 @@ class InlineAttachmentEditingController extends TextEditingController {
   InlineAttachmentEditingController({
     super.text,
     required AttachmentSpanBuilder attachmentBuilder,
-  }) : _attachmentBuilder = attachmentBuilder;
+  }) : _attachmentBuilder = attachmentBuilder {
+    addListener(_normalizeSelection);
+  }
 
   final AttachmentSpanBuilder _attachmentBuilder;
   Map<String, NoteAttachment> _attachmentsById = const {};
+  bool _normalizingSelection = false;
+  TextSelection? _lastSelection;
 
   static final RegExp _tokenPattern =
       RegExp(r'!\[image\]\(attachment:([^)]+)\)');
@@ -124,6 +128,49 @@ class InlineAttachmentEditingController extends TextEditingController {
       width: width,
       height: height,
     );
+  }
+
+  void _normalizeSelection() {
+    if (_normalizingSelection) return;
+    final selection = value.selection;
+    if (!selection.isValid || selection.baseOffset < 0) {
+      _lastSelection = selection;
+      return;
+    }
+    if (!selection.isCollapsed) {
+      _lastSelection = selection;
+      return;
+    }
+    final offset = selection.baseOffset;
+    final text = value.text;
+    for (final match in _tokenPattern.allMatches(text)) {
+      if (offset <= match.start || offset >= match.end) continue;
+      final snapped =
+          _snapOffset(offset, match.start, match.end, _lastSelection);
+      _normalizingSelection = true;
+      value = value.copyWith(
+        selection: TextSelection.collapsed(offset: snapped),
+      );
+      _normalizingSelection = false;
+      _lastSelection = value.selection;
+      return;
+    }
+    _lastSelection = selection;
+  }
+
+  int _snapOffset(
+    int offset,
+    int start,
+    int end,
+    TextSelection? previous,
+  ) {
+    if (previous != null) {
+      if (previous.baseOffset <= start) return start;
+      if (previous.baseOffset >= end) return end;
+    }
+    final distToStart = (offset - start).abs();
+    final distToEnd = (end - offset).abs();
+    return distToStart <= distToEnd ? start : end;
   }
 
   @override
