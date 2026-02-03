@@ -1310,6 +1310,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                             expands: true,
                             textAlign: TextAlign.left,
                             textAlignVertical: TextAlignVertical.top,
+                            inputFormatters:
+                                const [AttachmentTokenInputFormatter()],
                             decoration: appInputDecoration(
                               hintText: 'メモを書く…',
                             ).copyWith(

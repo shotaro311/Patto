@@ -1171,6 +1171,8 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                                 expands: true,
                                 textAlign: TextAlign.left,
                                 textAlignVertical: TextAlignVertical.top,
+                                inputFormatters:
+                                    const [AttachmentTokenInputFormatter()],
                                 decoration: appInputDecoration(
                                   hintText: 'クイックメモを書く…',
                                 ).copyWith(

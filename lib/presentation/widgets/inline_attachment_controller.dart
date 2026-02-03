@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../data/models/note.dart';
 
@@ -28,16 +29,12 @@ class InlineAttachmentEditingController extends TextEditingController {
   InlineAttachmentEditingController({
     super.text,
     required AttachmentSpanBuilder attachmentBuilder,
-  }) : _attachmentBuilder = attachmentBuilder {
-    addListener(_normalizeSelection);
-  }
+  }) : _attachmentBuilder = attachmentBuilder;
 
   final AttachmentSpanBuilder _attachmentBuilder;
   Map<String, NoteAttachment> _attachmentsById = const {};
-  bool _normalizingSelection = false;
-  TextSelection? _lastSelection;
 
-  static final RegExp _tokenPattern =
+  static final RegExp tokenPattern =
       RegExp(r'!\[image\]\(attachment:([^)]+)\)');
 
   static String buildToken(
@@ -130,49 +127,6 @@ class InlineAttachmentEditingController extends TextEditingController {
     );
   }
 
-  void _normalizeSelection() {
-    if (_normalizingSelection) return;
-    final selection = value.selection;
-    if (!selection.isValid || selection.baseOffset < 0) {
-      _lastSelection = selection;
-      return;
-    }
-    if (!selection.isCollapsed) {
-      _lastSelection = selection;
-      return;
-    }
-    final offset = selection.baseOffset;
-    final text = value.text;
-    for (final match in _tokenPattern.allMatches(text)) {
-      if (offset <= match.start || offset >= match.end) continue;
-      final snapped =
-          _snapOffset(offset, match.start, match.end, _lastSelection);
-      _normalizingSelection = true;
-      value = value.copyWith(
-        selection: TextSelection.collapsed(offset: snapped),
-      );
-      _normalizingSelection = false;
-      _lastSelection = value.selection;
-      return;
-    }
-    _lastSelection = selection;
-  }
-
-  int _snapOffset(
-    int offset,
-    int start,
-    int end,
-    TextSelection? previous,
-  ) {
-    if (previous != null) {
-      if (previous.baseOffset <= start) return start;
-      if (previous.baseOffset >= end) return end;
-    }
-    final distToStart = (offset - start).abs();
-    final distToEnd = (end - offset).abs();
-    return distToStart <= distToEnd ? start : end;
-  }
-
   @override
   TextSpan buildTextSpan({
     required BuildContext context,
@@ -180,7 +134,7 @@ class InlineAttachmentEditingController extends TextEditingController {
     required bool withComposing,
   }) {
     final text = value.text;
-    final matches = _tokenPattern.allMatches(text);
+    final matches = tokenPattern.allMatches(text);
     final composing = withComposing ? value.composing : TextRange.empty;
     final composingValid = withComposing &&
         composing.isValid &&
@@ -251,5 +205,91 @@ class InlineAttachmentEditingController extends TextEditingController {
       return TextSpan(style: style, text: text);
     }
     return TextSpan(style: style, children: children);
+  }
+}
+
+class AttachmentTokenInputFormatter extends TextInputFormatter {
+  const AttachmentTokenInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final selection = newValue.selection;
+    if (!selection.isValid || selection.baseOffset < 0) {
+      return newValue;
+    }
+    final text = newValue.text;
+    if (text.isEmpty) return newValue;
+
+    if (selection.isCollapsed) {
+      final snapped = _snapCollapsed(selection.baseOffset, oldValue, newValue);
+      if (snapped == selection.baseOffset) return newValue;
+      return newValue.copyWith(
+        selection: TextSelection.collapsed(offset: snapped),
+      );
+    }
+
+    var base = selection.baseOffset;
+    var extent = selection.extentOffset;
+    for (final match in InlineAttachmentEditingController.tokenPattern
+        .allMatches(text)) {
+      base = _snapOffset(base, match.start, match.end, oldValue, newValue);
+      extent = _snapOffset(
+        extent,
+        match.start,
+        match.end,
+        oldValue,
+        newValue,
+      );
+    }
+    if (base == selection.baseOffset && extent == selection.extentOffset) {
+      return newValue;
+    }
+    return newValue.copyWith(
+      selection: TextSelection(baseOffset: base, extentOffset: extent),
+    );
+  }
+
+  int _snapCollapsed(
+    int offset,
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    var next = offset;
+    for (final match in InlineAttachmentEditingController.tokenPattern
+        .allMatches(newValue.text)) {
+      next = _snapOffset(next, match.start, match.end, oldValue, newValue);
+    }
+    return next;
+  }
+
+  int _snapOffset(
+    int offset,
+    int start,
+    int end,
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    if (offset <= start || offset >= end) return offset;
+    final oldSel = oldValue.selection;
+    final newSel = newValue.selection;
+    if (oldSel.isValid &&
+        newSel.isValid &&
+        oldSel.isCollapsed &&
+        newSel.isCollapsed) {
+      final oldOffset = oldSel.baseOffset;
+      final newOffset = newSel.baseOffset;
+      if (oldOffset <= start && newOffset > oldOffset) {
+        return end;
+      }
+      if (oldOffset >= end && newOffset < oldOffset) {
+        return start;
+      }
+    }
+    final distToStart = (offset - start).abs();
+    final distToEnd = (end - offset).abs();
+    return distToStart <= distToEnd ? start : end;
   }
 }
