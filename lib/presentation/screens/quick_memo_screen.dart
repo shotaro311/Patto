@@ -546,6 +546,14 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
             .read(quickMemoControllerProvider.notifier)
             .updateContent(_controller.text);
       },
+      onRequestCaret: (target, after) {
+        FocusScope.of(context).requestFocus(_focusNode);
+        _controller.value = _controller.value.copyWith(
+          selection: TextSelection.collapsed(
+            offset: after ? target.end : target.start,
+          ),
+        );
+      },
       onContextMenu: (position) async {
         final note = await _requireDraftNote(allowEmpty: true);
         if (note == null) return;
@@ -1171,8 +1179,6 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                                 expands: true,
                                 textAlign: TextAlign.left,
                                 textAlignVertical: TextAlignVertical.top,
-                                inputFormatters:
-                                    const [AttachmentTokenInputFormatter()],
                                 decoration: appInputDecoration(
                                   hintText: 'クイックメモを書く…',
                                 ).copyWith(

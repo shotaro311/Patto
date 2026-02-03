@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../data/models/note.dart';
 
@@ -37,6 +36,9 @@ class InlineAttachmentEditingController extends TextEditingController {
   static final RegExp tokenPattern =
       RegExp(r'!\[image\]\(attachment:([^)]+)\)');
 
+  bool _sanitizing = false;
+  TextSelection? _lastSelection;
+
   static String buildToken(
     String id, {
     double? width,
@@ -54,6 +56,19 @@ class InlineAttachmentEditingController extends TextEditingController {
     _attachmentsById = {
       for (final attachment in attachments) attachment.id: attachment,
     };
+  }
+
+  @override
+  set value(TextEditingValue newValue) {
+    if (_sanitizing) {
+      super.value = newValue;
+      return;
+    }
+    final sanitized = _sanitizeSelection(newValue, previous: _lastSelection);
+    _sanitizing = true;
+    super.value = sanitized;
+    _sanitizing = false;
+    _lastSelection = sanitized.selection;
   }
 
   void replaceAttachmentToken(
@@ -97,6 +112,86 @@ class InlineAttachmentEditingController extends TextEditingController {
       text: nextText,
       selection: TextSelection(baseOffset: base, extentOffset: extent),
     );
+  }
+
+  TextEditingValue _sanitizeSelection(
+    TextEditingValue next, {
+    required TextSelection? previous,
+  }) {
+    final selection = next.selection;
+    if (!selection.isValid || selection.baseOffset < 0) return next;
+    final text = next.text;
+    if (text.isEmpty) return next;
+
+    if (selection.isCollapsed) {
+      final snapped = _snapCollapsed(
+        selection.baseOffset,
+        text,
+        previous,
+      );
+      if (snapped == selection.baseOffset) return next;
+      return next.copyWith(
+        selection: TextSelection.collapsed(offset: snapped),
+      );
+    }
+
+    var base = selection.baseOffset;
+    var extent = selection.extentOffset;
+    for (final match in tokenPattern.allMatches(text)) {
+      base = _snapOffset(
+        base,
+        match.start,
+        match.end,
+        previous: previous,
+        requested: base,
+      );
+      extent = _snapOffset(
+        extent,
+        match.start,
+        match.end,
+        previous: previous,
+        requested: extent,
+      );
+    }
+    if (base == selection.baseOffset && extent == selection.extentOffset) {
+      return next;
+    }
+    return next.copyWith(
+      selection: TextSelection(baseOffset: base, extentOffset: extent),
+    );
+  }
+
+  int _snapCollapsed(int offset, String text, TextSelection? previous) {
+    var next = offset;
+    for (final match in tokenPattern.allMatches(text)) {
+      next = _snapOffset(
+        next,
+        match.start,
+        match.end,
+        previous: previous,
+        requested: offset,
+      );
+    }
+    return next;
+  }
+
+  int _snapOffset(
+    int offset,
+    int start,
+    int end, {
+    required TextSelection? previous,
+    required int requested,
+  }) {
+    if (offset <= start || offset >= end) return offset;
+    if (previous != null && previous.isValid && previous.isCollapsed) {
+      final oldOffset = previous.baseOffset;
+      // Arrow-key / keyboard navigation should "jump over" the token.
+      if (oldOffset <= start && requested > oldOffset) return end;
+      if (oldOffset >= end && requested < oldOffset) return start;
+    }
+    final distToStart = (offset - start).abs();
+    final distToEnd = (end - offset).abs();
+    return distToStart <= distToEnd ? start : end;
   }
 
   InlineAttachmentToken _parseToken(Match match) {
@@ -205,91 +300,5 @@ class InlineAttachmentEditingController extends TextEditingController {
       return TextSpan(style: style, text: text);
     }
     return TextSpan(style: style, children: children);
-  }
-}
-
-class AttachmentTokenInputFormatter extends TextInputFormatter {
-  const AttachmentTokenInputFormatter();
-
-  @override
-  TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    final selection = newValue.selection;
-    if (!selection.isValid || selection.baseOffset < 0) {
-      return newValue;
-    }
-    final text = newValue.text;
-    if (text.isEmpty) return newValue;
-
-    if (selection.isCollapsed) {
-      final snapped = _snapCollapsed(selection.baseOffset, oldValue, newValue);
-      if (snapped == selection.baseOffset) return newValue;
-      return newValue.copyWith(
-        selection: TextSelection.collapsed(offset: snapped),
-      );
-    }
-
-    var base = selection.baseOffset;
-    var extent = selection.extentOffset;
-    for (final match in InlineAttachmentEditingController.tokenPattern
-        .allMatches(text)) {
-      base = _snapOffset(base, match.start, match.end, oldValue, newValue);
-      extent = _snapOffset(
-        extent,
-        match.start,
-        match.end,
-        oldValue,
-        newValue,
-      );
-    }
-    if (base == selection.baseOffset && extent == selection.extentOffset) {
-      return newValue;
-    }
-    return newValue.copyWith(
-      selection: TextSelection(baseOffset: base, extentOffset: extent),
-    );
-  }
-
-  int _snapCollapsed(
-    int offset,
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    var next = offset;
-    for (final match in InlineAttachmentEditingController.tokenPattern
-        .allMatches(newValue.text)) {
-      next = _snapOffset(next, match.start, match.end, oldValue, newValue);
-    }
-    return next;
-  }
-
-  int _snapOffset(
-    int offset,
-    int start,
-    int end,
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    if (offset <= start || offset >= end) return offset;
-    final oldSel = oldValue.selection;
-    final newSel = newValue.selection;
-    if (oldSel.isValid &&
-        newSel.isValid &&
-        oldSel.isCollapsed &&
-        newSel.isCollapsed) {
-      final oldOffset = oldSel.baseOffset;
-      final newOffset = newSel.baseOffset;
-      if (oldOffset <= start && newOffset > oldOffset) {
-        return end;
-      }
-      if (oldOffset >= end && newOffset < oldOffset) {
-        return start;
-      }
-    }
-    final distToStart = (offset - start).abs();
-    final distToEnd = (end - offset).abs();
-    return distToStart <= distToEnd ? start : end;
   }
 }

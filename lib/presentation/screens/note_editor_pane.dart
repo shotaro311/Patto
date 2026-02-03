@@ -978,6 +978,14 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
         );
         _scheduleSave();
       },
+      onRequestCaret: (target, after) {
+        FocusScope.of(context).requestFocus(_focusNode);
+        _controller.value = _controller.value.copyWith(
+          selection: TextSelection.collapsed(
+            offset: after ? target.end : target.start,
+          ),
+        );
+      },
       onContextMenu: note == null
           ? null
           : (position) => _showAttachmentMenu(note, attachment, position),
@@ -1310,8 +1318,6 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                             expands: true,
                             textAlign: TextAlign.left,
                             textAlignVertical: TextAlignVertical.top,
-                            inputFormatters:
-                                const [AttachmentTokenInputFormatter()],
                             decoration: appInputDecoration(
                               hintText: 'メモを書く…',
                             ).copyWith(

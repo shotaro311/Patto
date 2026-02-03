@@ -13,6 +13,7 @@ class InlineAttachmentView extends StatefulWidget {
     required this.maxWidth,
     required this.onResize,
     this.onContextMenu,
+    this.onRequestCaret,
   });
 
   final NoteAttachment attachment;
@@ -20,6 +21,7 @@ class InlineAttachmentView extends StatefulWidget {
   final double maxWidth;
   final void Function(InlineAttachmentToken token, Size size) onResize;
   final void Function(Offset globalPosition)? onContextMenu;
+  final void Function(InlineAttachmentToken token, bool after)? onRequestCaret;
 
   @override
   State<InlineAttachmentView> createState() => _InlineAttachmentViewState();
@@ -98,6 +100,14 @@ class _InlineAttachmentViewState extends State<InlineAttachmentView> {
       child: Align(
         alignment: Alignment.centerLeft,
         child: GestureDetector(
+          onTapDown: widget.onRequestCaret == null
+              ? null
+              : (details) {
+                  // When clicking on the image span, ask the editor to place the
+                  // caret on either side of the token (prevents "stuck in token").
+                  final after = details.localPosition.dx >= size.width / 2;
+                  widget.onRequestCaret!(widget.token, after);
+                },
           onSecondaryTapDown: widget.onContextMenu == null
               ? null
               : (details) => widget.onContextMenu!(details.globalPosition),
