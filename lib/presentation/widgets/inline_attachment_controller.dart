@@ -38,6 +38,7 @@ class InlineAttachmentEditingController extends TextEditingController {
 
   bool _sanitizing = false;
   TextSelection? _lastSelection;
+  bool _suppressSanitizeOnce = false;
 
   static String buildToken(
     String id, {
@@ -58,10 +59,24 @@ class InlineAttachmentEditingController extends TextEditingController {
     };
   }
 
+  void setCaretAtTokenEdge(InlineAttachmentToken token, {required bool after}) {
+    final offset = after ? token.end : token.start;
+    _suppressSanitizeOnce = true;
+    value = value.copyWith(
+      selection: TextSelection.collapsed(offset: offset),
+    );
+  }
+
   @override
   set value(TextEditingValue newValue) {
     if (_sanitizing) {
       super.value = newValue;
+      return;
+    }
+    if (_suppressSanitizeOnce) {
+      _suppressSanitizeOnce = false;
+      super.value = newValue;
+      _lastSelection = newValue.selection;
       return;
     }
     final sanitized = _sanitizeSelection(newValue, previous: _lastSelection);
@@ -182,12 +197,21 @@ class InlineAttachmentEditingController extends TextEditingController {
     required TextSelection? previous,
     required int requested,
   }) {
-    if (offset <= start || offset >= end) return offset;
+    if (offset < start || offset > end) return offset;
     if (previous != null && previous.isValid && previous.isCollapsed) {
       final oldOffset = previous.baseOffset;
       // Arrow-key / keyboard navigation should "jump over" the token.
+      if (offset == start && oldOffset < start && requested >= start) {
+        return end;
+      }
+      if (offset == end && oldOffset > end && requested <= end) {
+        return start;
+      }
       if (oldOffset <= start && requested > oldOffset) return end;
       if (oldOffset >= end && requested < oldOffset) return start;
+    } else {
+      // If we don't know the navigation direction, keep exact edges as-is.
+      if (offset == start || offset == end) return offset;
     }
     final distToStart = (offset - start).abs();
     final distToEnd = (end - offset).abs();

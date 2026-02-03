@@ -980,11 +980,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       },
       onRequestCaret: (target, after) {
         FocusScope.of(context).requestFocus(_focusNode);
-        _controller.value = _controller.value.copyWith(
-          selection: TextSelection.collapsed(
-            offset: after ? target.end : target.start,
-          ),
-        );
+        _controller.setCaretAtTokenEdge(target, after: after);
       },
       onContextMenu: note == null
           ? null

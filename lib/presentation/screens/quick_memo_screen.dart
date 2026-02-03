@@ -548,11 +548,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
       },
       onRequestCaret: (target, after) {
         FocusScope.of(context).requestFocus(_focusNode);
-        _controller.value = _controller.value.copyWith(
-          selection: TextSelection.collapsed(
-            offset: after ? target.end : target.start,
-          ),
-        );
+        _controller.setCaretAtTokenEdge(target, after: after);
       },
       onContextMenu: (position) async {
         final note = await _requireDraftNote(allowEmpty: true);
