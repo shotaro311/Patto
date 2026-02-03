@@ -27,6 +27,7 @@ import '../widgets/ai_prompt_presets_hover_menu.dart';
 import '../widgets/reorderable_icon_toolbar.dart';
 import '../widgets/top_right_toast.dart';
 import '../widgets/inline_attachment_controller.dart';
+import '../widgets/inline_attachment_view.dart';
 
 class NoteEditorPane extends ConsumerStatefulWidget {
   const NoteEditorPane({super.key, required this.noteId});
@@ -38,6 +39,7 @@ class NoteEditorPane extends ConsumerStatefulWidget {
 }
 
 class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
+  static const EdgeInsets _editorContentPadding = EdgeInsets.all(12);
   static final RegExp _symbolPattern = RegExp(r'[\p{P}\p{S}]', unicode: true);
   static final RegExp _hashTagPattern = RegExp(
     r'(?<!\w)#([\p{L}\p{N}_-]+)',
@@ -73,6 +75,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   bool _aiImageContextEnabled = false;
   bool _isDragOver = false;
   Note? _attachmentNote;
+  double _editorWidth = 0;
 
   int _countText(String text, bool excludeSymbols) {
     if (!excludeSymbols) return text.runes.length;
@@ -217,12 +220,13 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   void initState() {
     super.initState();
     _controller = InlineAttachmentEditingController(
-      attachmentBuilder: (context, attachment) {
+      attachmentBuilder: (context, attachment, token) {
         final note = _attachmentNote;
         return _buildInlineAttachment(
           context,
           note,
           attachment,
+          token,
         );
       },
     );
@@ -839,16 +843,21 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   }
 
   void _insertAttachmentToken(String attachmentId) {
-    final token = '![image](attachment:$attachmentId)';
+    final token = InlineAttachmentEditingController.buildToken(attachmentId);
     final current = _controller.text;
     final selection = _controller.selection;
     final start = selection.isValid ? selection.start : current.length;
     final end = selection.isValid ? selection.end : current.length;
-    final insert = '$token\n';
-    final next = current.replaceRange(start, end, insert);
+    final before = current.substring(0, start);
+    final after = current.substring(end);
+    final needsLeadingBreak = before.isNotEmpty && !before.endsWith('\n');
+    final needsTrailingBreak = after.isNotEmpty && !after.startsWith('\n');
+    final insert =
+        '${needsLeadingBreak ? '\n' : ''}$token${needsTrailingBreak ? '\n' : ''}\n';
+    final next = before + insert + after;
     _controller.value = TextEditingValue(
       text: next,
-      selection: TextSelection.collapsed(offset: start + insert.length),
+      selection: TextSelection.collapsed(offset: before.length + insert.length),
     );
     _scheduleSave();
   }
@@ -951,55 +960,27 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     BuildContext context,
     Note? note,
     NoteAttachment attachment,
+    InlineAttachmentToken token,
   ) {
-    final file = File(attachment.localPath);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth.isFinite && constraints.maxWidth > 0
-            ? constraints.maxWidth
-            : MediaQuery.of(context).size.width;
-        return SizedBox(
-          width: width,
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: GestureDetector(
-              onSecondaryTapDown: (details) {
-                if (note == null) return;
-                _showAttachmentMenu(note, attachment, details.globalPosition);
-              },
-              onLongPressStart: (details) {
-                if (note == null) return;
-                _showAttachmentMenu(note, attachment, details.globalPosition);
-              },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest,
-                    ),
-                    child: Image.file(
-                      file,
-                      width: 160,
-                      height: 120,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) =>
-                          const SizedBox(
-                        width: 160,
-                        height: 120,
-                        child: Center(child: Icon(Icons.broken_image_outlined)),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
+    final maxWidth = _editorWidth > 0
+        ? _editorWidth
+        : MediaQuery.of(context).size.width - _editorContentPadding.horizontal;
+    return InlineAttachmentView(
+      key: ValueKey('attachment-${attachment.id}'),
+      attachment: attachment,
+      token: token,
+      maxWidth: maxWidth,
+      onResize: (target, size) {
+        _controller.replaceAttachmentToken(
+          target,
+          width: size.width,
+          height: size.height,
         );
+        _scheduleSave();
       },
+      onContextMenu: note == null
+          ? null
+          : (position) => _showAttachmentMenu(note, attachment, position),
     );
   }
 
@@ -1317,21 +1298,32 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                         }
                         return KeyEventResult.ignored;
                       },
-                      child: TextField(
-                        controller: _controller,
-                        focusNode: _focusNode,
-                        maxLines: null,
-                        expands: true,
-                        textAlign: TextAlign.left,
-                        textAlignVertical: TextAlignVertical.top,
-                        decoration: appInputDecoration(hintText: 'メモを書く…'),
-                        onChanged: (_) => _scheduleSave(),
-                        contextMenuBuilder: (context, editableTextState) {
-                          return _buildAiContextMenu(
-                            context,
-                            editableTextState,
-                            settings,
-                            note,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          _editorWidth = constraints.maxWidth -
+                              _editorContentPadding.horizontal;
+                          if (_editorWidth < 0) _editorWidth = 0;
+                          return TextField(
+                            controller: _controller,
+                            focusNode: _focusNode,
+                            maxLines: null,
+                            expands: true,
+                            textAlign: TextAlign.left,
+                            textAlignVertical: TextAlignVertical.top,
+                            decoration: appInputDecoration(
+                              hintText: 'メモを書く…',
+                            ).copyWith(
+                              contentPadding: _editorContentPadding,
+                            ),
+                            onChanged: (_) => _scheduleSave(),
+                            contextMenuBuilder: (context, editableTextState) {
+                              return _buildAiContextMenu(
+                                context,
+                                editableTextState,
+                                settings,
+                                note,
+                              );
+                            },
                           );
                         },
                       ),

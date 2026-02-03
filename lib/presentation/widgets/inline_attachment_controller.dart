@@ -5,7 +5,24 @@ import '../../data/models/note.dart';
 typedef AttachmentSpanBuilder = Widget Function(
   BuildContext context,
   NoteAttachment attachment,
+  InlineAttachmentToken token,
 );
+
+class InlineAttachmentToken {
+  InlineAttachmentToken({
+    required this.id,
+    required this.start,
+    required this.end,
+    this.width,
+    this.height,
+  });
+
+  final String id;
+  final int start;
+  final int end;
+  final double? width;
+  final double? height;
+}
 
 class InlineAttachmentEditingController extends TextEditingController {
   InlineAttachmentEditingController({
@@ -19,10 +36,94 @@ class InlineAttachmentEditingController extends TextEditingController {
   static final RegExp _tokenPattern =
       RegExp(r'!\[image\]\(attachment:([^)]+)\)');
 
+  static String buildToken(
+    String id, {
+    double? width,
+    double? height,
+  }) {
+    if (width == null || height == null) {
+      return '![image](attachment:$id)';
+    }
+    final w = width.round();
+    final h = height.round();
+    return '![image](attachment:$id?w=$w&h=$h)';
+  }
+
   void setAttachments(List<NoteAttachment> attachments) {
     _attachmentsById = {
       for (final attachment in attachments) attachment.id: attachment,
     };
+  }
+
+  void replaceAttachmentToken(
+    InlineAttachmentToken token, {
+    required double width,
+    required double height,
+  }) {
+    final current = value.text;
+    if (token.start < 0 ||
+        token.end < token.start ||
+        token.end > current.length) {
+      return;
+    }
+    final nextToken =
+        buildToken(token.id, width: width, height: height);
+    final nextText = current.replaceRange(token.start, token.end, nextToken);
+    final selection = value.selection;
+    final delta = nextToken.length - (token.end - token.start);
+    if (!selection.isValid) {
+      value = value.copyWith(
+        text: nextText,
+        selection: TextSelection.collapsed(
+          offset: (token.start + nextToken.length).clamp(0, nextText.length),
+        ),
+      );
+      return;
+    }
+    var base = selection.baseOffset;
+    var extent = selection.extentOffset;
+    if (base > token.end) {
+      base += delta;
+    } else if (base > token.start) {
+      base = token.start + nextToken.length;
+    }
+    if (extent > token.end) {
+      extent += delta;
+    } else if (extent > token.start) {
+      extent = token.start + nextToken.length;
+    }
+    value = value.copyWith(
+      text: nextText,
+      selection: TextSelection(baseOffset: base, extentOffset: extent),
+    );
+  }
+
+  InlineAttachmentToken _parseToken(Match match) {
+    final raw = match.group(1) ?? '';
+    var id = raw;
+    double? width;
+    double? height;
+    final queryIndex = raw.indexOf('?');
+    if (queryIndex != -1) {
+      id = raw.substring(0, queryIndex);
+      final query = raw.substring(queryIndex + 1);
+      for (final part in query.split('&')) {
+        final pair = part.split('=');
+        if (pair.length != 2) continue;
+        final key = pair[0];
+        final value = double.tryParse(pair[1]);
+        if (value == null) continue;
+        if (key == 'w') width = value;
+        if (key == 'h') height = value;
+      }
+    }
+    return InlineAttachmentToken(
+      id: id,
+      start: match.start,
+      end: match.end,
+      width: width,
+      height: height,
+    );
   }
 
   @override
@@ -81,15 +182,15 @@ class InlineAttachmentEditingController extends TextEditingController {
       if (match.start > last) {
         addTextSpan(last, match.start);
       }
-      final id = match.group(1);
-      final attachment = id == null ? null : _attachmentsById[id];
+      final token = _parseToken(match);
+      final attachment = _attachmentsById[token.id];
       if (attachment == null) {
         addTextSpan(match.start, match.end);
       } else {
         children.add(
           WidgetSpan(
-            alignment: PlaceholderAlignment.middle,
-            child: _attachmentBuilder(context, attachment),
+            alignment: PlaceholderAlignment.top,
+            child: _attachmentBuilder(context, attachment, token),
           ),
         );
       }

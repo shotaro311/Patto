@@ -23,6 +23,7 @@ import '../widgets/app_input_decoration.dart';
 import '../widgets/ai_prompt_presets_hover_menu.dart';
 import '../widgets/reorderable_icon_toolbar.dart';
 import '../widgets/inline_attachment_controller.dart';
+import '../widgets/inline_attachment_view.dart';
 import 'external_paste_guard.dart';
 import 'note_editor_pane.dart';
 
@@ -36,6 +37,7 @@ class QuickMemoScreen extends ConsumerStatefulWidget {
 }
 
 class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
+  static const EdgeInsets _editorContentPadding = EdgeInsets.all(12);
   static final RegExp _symbolPattern = RegExp(r'[\p{P}\p{S}]', unicode: true);
   static final RegExp _urlPattern = RegExp(r'https?://[^\s)>\"]+');
   final _focusNode = FocusNode();
@@ -55,6 +57,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   bool _aiTagSuggesting = false;
   int _aiTagSuggestToken = 0;
   List<String> _aiSuggestedTags = [];
+  double _editorWidth = 0;
 
   int _countText(String text, bool excludeSymbols) {
     if (!excludeSymbols) return text.runes.length;
@@ -409,16 +412,21 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   }
 
   void _insertAttachmentToken(String attachmentId) {
-    final token = '![image](attachment:$attachmentId)';
+    final token = InlineAttachmentEditingController.buildToken(attachmentId);
     final current = _controller.text;
     final selection = _controller.selection;
     final start = selection.isValid ? selection.start : current.length;
     final end = selection.isValid ? selection.end : current.length;
-    final insert = '$token\n';
-    final next = current.replaceRange(start, end, insert);
+    final before = current.substring(0, start);
+    final after = current.substring(end);
+    final needsLeadingBreak = before.isNotEmpty && !before.endsWith('\n');
+    final needsTrailingBreak = after.isNotEmpty && !after.startsWith('\n');
+    final insert =
+        '${needsLeadingBreak ? '\n' : ''}$token${needsTrailingBreak ? '\n' : ''}\n';
+    final next = before + insert + after;
     _controller.value = TextEditingValue(
       text: next,
-      selection: TextSelection.collapsed(offset: start + insert.length),
+      selection: TextSelection.collapsed(offset: before.length + insert.length),
     );
     ref
         .read(quickMemoControllerProvider.notifier)
@@ -518,56 +526,30 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   Widget _buildInlineAttachment(
     BuildContext context,
     NoteAttachment attachment,
+    InlineAttachmentToken token,
   ) {
-    final file = File(attachment.localPath);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth.isFinite && constraints.maxWidth > 0
-            ? constraints.maxWidth
-            : MediaQuery.of(context).size.width;
-        return SizedBox(
-          width: width,
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: GestureDetector(
-              onSecondaryTapDown: (details) async {
-                final note = await _requireDraftNote(allowEmpty: true);
-                if (note == null) return;
-                _showAttachmentMenu(note, attachment, details.globalPosition);
-              },
-              onLongPressStart: (details) async {
-                final note = await _requireDraftNote(allowEmpty: true);
-                if (note == null) return;
-                _showAttachmentMenu(note, attachment, details.globalPosition);
-              },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest,
-                    ),
-                    child: Image.file(
-                      file,
-                      width: 160,
-                      height: 120,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) =>
-                          const SizedBox(
-                        width: 160,
-                        height: 120,
-                        child: Center(child: Icon(Icons.broken_image_outlined)),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
+    final maxWidth = _editorWidth > 0
+        ? _editorWidth
+        : MediaQuery.of(context).size.width - _editorContentPadding.horizontal;
+    return InlineAttachmentView(
+      key: ValueKey('attachment-${attachment.id}'),
+      attachment: attachment,
+      token: token,
+      maxWidth: maxWidth,
+      onResize: (target, size) {
+        _controller.replaceAttachmentToken(
+          target,
+          width: size.width,
+          height: size.height,
         );
+        ref
+            .read(quickMemoControllerProvider.notifier)
+            .updateContent(_controller.text);
+      },
+      onContextMenu: (position) async {
+        final note = await _requireDraftNote(allowEmpty: true);
+        if (note == null) return;
+        _showAttachmentMenu(note, attachment, position);
       },
     );
   }
@@ -606,8 +588,8 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   void initState() {
     super.initState();
     _controller = InlineAttachmentEditingController(
-      attachmentBuilder: (context, attachment) {
-        return _buildInlineAttachment(context, attachment);
+      attachmentBuilder: (context, attachment, token) {
+        return _buildInlineAttachment(context, attachment, token);
       },
     );
     _externalPasteGuard = ExternalPasteGuard(
@@ -1177,23 +1159,33 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                             }
                             return KeyEventResult.ignored;
                           },
-                          child: TextField(
-                            controller: _controller,
-                            focusNode: _focusNode,
-                            maxLines: null,
-                            expands: true,
-                            textAlign: TextAlign.left,
-                            textAlignVertical: TextAlignVertical.top,
-                            decoration: appInputDecoration(
-                              hintText: 'クイックメモを書く…',
-                            ),
-                            onChanged: (value) => ref
-                                .read(quickMemoControllerProvider.notifier)
-                                .updateContent(value),
-                            contextMenuBuilder: (context, editableTextState) {
-                              return _buildTextContextMenu(
-                                context,
-                                editableTextState,
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              _editorWidth = constraints.maxWidth -
+                                  _editorContentPadding.horizontal;
+                              if (_editorWidth < 0) _editorWidth = 0;
+                              return TextField(
+                                controller: _controller,
+                                focusNode: _focusNode,
+                                maxLines: null,
+                                expands: true,
+                                textAlign: TextAlign.left,
+                                textAlignVertical: TextAlignVertical.top,
+                                decoration: appInputDecoration(
+                                  hintText: 'クイックメモを書く…',
+                                ).copyWith(
+                                  contentPadding: _editorContentPadding,
+                                ),
+                                onChanged: (value) => ref
+                                    .read(quickMemoControllerProvider.notifier)
+                                    .updateContent(value),
+                                contextMenuBuilder:
+                                    (context, editableTextState) {
+                                  return _buildTextContextMenu(
+                                    context,
+                                    editableTextState,
+                                  );
+                                },
                               );
                             },
                           ),
