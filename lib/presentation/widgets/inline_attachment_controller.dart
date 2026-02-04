@@ -307,12 +307,25 @@ class InlineAttachmentEditingController extends TextEditingController {
       if (attachment == null) {
         addTextSpan(match.start, match.end);
       } else {
+        // Keep the rendered span length aligned with the underlying source
+        // text length. EditableText selection offsets are based on the raw
+        // text, so we insert (tokenLength - 1) zero-size placeholders in
+        // addition to the actual image widget.
+        final tokenLength = match.end - match.start;
         children.add(
           WidgetSpan(
             alignment: PlaceholderAlignment.top,
             child: _attachmentBuilder(context, attachment, token),
           ),
         );
+        for (var i = 1; i < tokenLength; i++) {
+          children.add(
+            const WidgetSpan(
+              alignment: PlaceholderAlignment.top,
+              child: SizedBox.shrink(),
+            ),
+          );
+        }
       }
       last = match.end;
     }
