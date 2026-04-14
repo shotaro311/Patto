@@ -33,6 +33,8 @@ class AppSettingsController extends StateNotifier<AppSettings> {
 
     return AppSettings(
       clientId: clientId,
+      themeStyle: AppThemeStyleCodec.fromString(prefs.getString(_kThemeStyle)),
+      darkModeEnabled: prefs.getBool(_kDarkModeEnabled) ?? false,
       syncEnabled: prefs.getBool(_kSyncEnabled) ?? false,
       quickLaunchOpenMode: QuickLaunchOpenModeCodec.fromString(
         prefs.getString(_kQuickLaunchOpenMode),
@@ -156,7 +158,7 @@ class AppSettingsController extends StateNotifier<AppSettings> {
       AiChatSystemPrompt(
         name: '標準',
         prompt:
-            'あなたはメモ編集を支援するAIチャットです。現在のメモ本文と添付画像を常に参考にし、ユーザーの指示に沿って、編集案・追記案・改善案を日本語で簡潔に返してください。本文に反映しやすい完成文を優先してください。',
+            'あなたはメモ編集を支援するAIチャットです。ユーザーの指示に沿って、日本語で簡潔に返してください。必要なら本文に反映しやすい完成文を優先してください。',
       ),
       AiChatSystemPrompt(name: '', prompt: ''),
       AiChatSystemPrompt(name: '', prompt: ''),
@@ -232,6 +234,16 @@ class AppSettingsController extends StateNotifier<AppSettings> {
   Future<void> setSyncEnabled(bool enabled) async {
     await _prefs.setBool(_kSyncEnabled, enabled);
     state = state.copyWith(syncEnabled: enabled);
+  }
+
+  Future<void> setThemeStyle(AppThemeStyle style) async {
+    await _prefs.setString(_kThemeStyle, style.toStorageString());
+    state = state.copyWith(themeStyle: style);
+  }
+
+  Future<void> setDarkModeEnabled(bool enabled) async {
+    await _prefs.setBool(_kDarkModeEnabled, enabled);
+    state = state.copyWith(darkModeEnabled: enabled);
   }
 
   Future<void> setQuickLaunchOpenMode(QuickLaunchOpenMode mode) async {
@@ -382,6 +394,8 @@ class AppSettingsController extends StateNotifier<AppSettings> {
 }
 
 const _kClientId = 'clientId';
+const _kThemeStyle = 'themeStyle';
+const _kDarkModeEnabled = 'darkModeEnabled';
 const _kSyncEnabled = 'syncEnabled';
 const _kQuickLaunchOpenMode = 'quickLaunchOpenMode';
 const _kMacModifierKey = 'macModifierKey';

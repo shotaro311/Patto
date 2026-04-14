@@ -250,6 +250,7 @@ class AiService {
     required List<AiImageInput> noteImages,
     required List<AiChatMessageInput> history,
     required String systemPrompt,
+    required bool includeNoteContext,
     required bool useAppleIntelligence,
     required bool useExternalApi,
   }) async {
@@ -277,6 +278,7 @@ class AiService {
               noteContent: noteContent,
               history: history,
               systemPrompt: systemPrompt,
+              includeNoteContext: includeNoteContext,
             );
           } on PlatformException catch (e) {
             if (!useExternalApi) {
@@ -303,7 +305,7 @@ class AiService {
           ),
         )
         .toList(growable: false);
-    final normalizedSystemPrompt = _resolveChatSystemPrompt(systemPrompt);
+    final normalizedSystemPrompt = systemPrompt.trim();
 
     return switch (_settings.aiExternalProvider) {
       AiExternalProvider.openAiCompatible => await _chatWithOpenAiCompatible(
@@ -312,6 +314,7 @@ class AiService {
         noteImages: normalizedNoteImages,
         history: normalizedHistory,
         systemPrompt: normalizedSystemPrompt,
+        includeNoteContext: includeNoteContext,
       ),
       AiExternalProvider.gemini => await _chatWithGemini(
         noteTitle: noteTitle,
@@ -319,6 +322,7 @@ class AiService {
         noteImages: normalizedNoteImages,
         history: normalizedHistory,
         systemPrompt: normalizedSystemPrompt,
+        includeNoteContext: includeNoteContext,
       ),
     };
   }
@@ -400,24 +404,28 @@ class AiService {
     required String noteContent,
     required List<AiChatMessageInput> history,
     required String systemPrompt,
+    required bool includeNoteContext,
   }) async {
     final transcript = _buildChatTranscript(history);
-    final noteContext = _buildChatNoteContext(
-      noteTitle: noteTitle,
-      noteContent: noteContent,
-    );
-    final instruction = [
-      _resolveChatSystemPrompt(systemPrompt),
-      '以下のメモ内容と会話履歴を参考に、最後のユーザー発話への返答だけを日本語で返してください。',
-      '必要なら、そのまま本文に反映できる完成文で返してください。',
-      '説明の前置きや箇条書きは不要です。',
-      '',
+    final noteContext = includeNoteContext
+        ? _buildChatNoteContext(
+            noteTitle: noteTitle,
+            noteContent: noteContent,
+          )
+        : '';
+    final instructionLines = <String>[
+      if (systemPrompt.trim().isNotEmpty) systemPrompt.trim(),
+      '最後のユーザー発話に日本語で返答してください。',
+    ];
+    final originalText = [
+      if (noteContext.isNotEmpty) noteContext,
+      if (noteContext.isNotEmpty) '',
       '【会話履歴】',
       transcript,
     ].join('\n');
     return _appleClient.editText(
-      instruction: instruction,
-      originalText: noteContext,
+      instruction: instructionLines.join('\n'),
+      originalText: originalText,
     );
   }
 
@@ -427,26 +435,30 @@ class AiService {
     required List<AiImageInput> noteImages,
     required List<AiChatMessageInput> history,
     required String systemPrompt,
+    required bool includeNoteContext,
   }) async {
     final apiKey = await _keyRepository.readKey();
     if (apiKey == null || apiKey.isEmpty) {
       throw const AiException('AI APIキーが未設定です');
     }
 
-    final noteContext = _buildChatNoteContext(
-      noteTitle: noteTitle,
-      noteContent: noteContent,
-    );
+    final noteContext = includeNoteContext
+        ? _buildChatNoteContext(
+            noteTitle: noteTitle,
+            noteContent: noteContent,
+          )
+        : '';
     final model = GenerativeModel(
       model: _resolvedExternalModel(),
       apiKey: apiKey,
-      systemInstruction: Content.system(systemPrompt),
+      systemInstruction: systemPrompt.isEmpty ? null : Content.system(systemPrompt),
     );
     final prompt = <Content>[
-      Content.multi([
-        TextPart(noteContext),
-        for (final image in noteImages) DataPart(image.mimeType, image.bytes),
-      ]),
+      if (noteContext.isNotEmpty || noteImages.isNotEmpty)
+        Content.multi([
+          if (noteContext.isNotEmpty) TextPart(noteContext),
+          for (final image in noteImages) DataPart(image.mimeType, image.bytes),
+        ]),
       ...history.map(_toGeminiChatContent),
     ];
     final response = await model.generateContent(prompt);
@@ -463,11 +475,14 @@ class AiService {
     required List<AiImageInput> noteImages,
     required List<AiChatMessageInput> history,
     required String systemPrompt,
+    required bool includeNoteContext,
   }) async {
-    final noteContext = _buildChatNoteContext(
-      noteTitle: noteTitle,
-      noteContent: noteContent,
-    );
+    final noteContext = includeNoteContext
+        ? _buildChatNoteContext(
+            noteTitle: noteTitle,
+            noteContent: noteContent,
+          )
+        : '';
     final trimmed = _trimChatHistoryForLocalModel(
       noteContext: noteContext,
       noteImages: noteImages,
@@ -475,12 +490,13 @@ class AiService {
       limit: _settings.aiChatContextWindowSize,
     );
     final messages = <Map<String, dynamic>>[
-      {'role': 'system', 'content': systemPrompt},
-      _toOpenAiCompatibleMessage(
-        role: 'user',
-        text: trimmed.noteContext,
-        images: trimmed.noteImages,
-      ),
+      if (systemPrompt.isNotEmpty) {'role': 'system', 'content': systemPrompt},
+      if (trimmed.noteContext.isNotEmpty || trimmed.noteImages.isNotEmpty)
+        _toOpenAiCompatibleMessage(
+          role: 'user',
+          text: trimmed.noteContext,
+          images: trimmed.noteImages,
+        ),
       ...trimmed.history.map(_toOpenAiCompatibleChatMessage),
     ];
     try {
@@ -547,10 +563,18 @@ class AiService {
     required int limit,
   }) {
     final safeLimit = limit < 4092 ? 4092 : limit;
-    final maxNoteChars = (safeLimit * 0.55).round().clamp(1500, safeLimit);
-    final trimmedNote = _truncateTextForContext(noteContext, maxNoteChars);
+    final maxNoteChars = noteContext.trim().isEmpty
+        ? 0
+        : (safeLimit * 0.55).round().clamp(1500, safeLimit);
+    final trimmedNote = maxNoteChars == 0
+        ? ''
+        : _truncateTextForContext(noteContext, maxNoteChars);
     final kept = <AiChatMessageInput>[];
-    var remaining = safeLimit - trimmedNote.length;
+    final noteCost =
+        trimmedNote.length +
+        (noteImages.length * 900) +
+        ((trimmedNote.isNotEmpty || noteImages.isNotEmpty) ? 120 : 0);
+    var remaining = safeLimit - noteCost;
     for (final message in history.reversed) {
       final cost = _estimateChatMessageCost(message);
       if (kept.isEmpty || remaining - cost >= 0) {
@@ -605,12 +629,6 @@ class AiService {
           return '$speaker$imageLabel: ${message.text.trim()}';
         })
         .join('\n');
-  }
-
-  String _resolveChatSystemPrompt(String value) {
-    final trimmed = value.trim();
-    if (trimmed.isNotEmpty) return trimmed;
-    return 'あなたはメモ編集を支援するAIチャットです。ユーザーの指示に沿って、編集案・追記案・改善案を日本語で簡潔に返してください。';
   }
 
   Future<String> editText({

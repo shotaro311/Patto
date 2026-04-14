@@ -19,6 +19,7 @@ import '../providers/auth_providers.dart';
 import '../providers/note_repository_provider.dart';
 import '../providers/sync_providers.dart';
 import '../widgets/app_input_decoration.dart';
+import '../widgets/patto_surface.dart';
 import '../widgets/top_right_toast.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -156,7 +157,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _displaySectionKey = GlobalKey();
   final _tagSectionKey = GlobalKey();
   final _aiSectionKey = GlobalKey();
-  final _promptSectionKey = GlobalKey();
+  final _editPromptSectionKey = GlobalKey();
+  final _titlePromptSectionKey = GlobalKey();
+  final _chatPromptSectionKey = GlobalKey();
   final _aiKeyController = TextEditingController();
   final _aiBaseUrlController = TextEditingController();
   final _aiModelController = TextEditingController();
@@ -695,8 +698,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return _tagSectionKey;
       case _SettingsSection.ai:
         return _aiSectionKey;
-      case _SettingsSection.prompts:
-        return _promptSectionKey;
+      case _SettingsSection.editPrompts:
+        return _editPromptSectionKey;
+      case _SettingsSection.titlePrompts:
+        return _titlePromptSectionKey;
+      case _SettingsSection.chatPrompts:
+        return _chatPromptSectionKey;
     }
   }
 
@@ -704,13 +711,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (_selectedSection != section && mounted) {
       setState(() => _selectedSection = section);
     }
-    final targetContext = _keyForSection(section).currentContext;
-    if (targetContext == null) return;
-    await Scrollable.ensureVisible(
-      targetContext,
+    final targetKey = _keyForSection(section);
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    final renderObject = targetKey.currentContext?.findRenderObject();
+    if (renderObject == null || !_scrollController.hasClients) return;
+    await _scrollController.position.ensureVisible(
+      renderObject,
+      alignment: 0.04,
       duration: const Duration(milliseconds: 240),
       curve: Curves.easeOutCubic,
-      alignment: 0.04,
     );
   }
 
@@ -722,15 +732,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required List<Widget> children,
   }) {
     final theme = Theme.of(context);
-    return Container(
+    return PattoSurface(
       key: key,
       margin: const EdgeInsets.only(bottom: 18),
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
+      floating: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -792,16 +798,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     int maxPromptLines = 4,
   }) {
     final theme = Theme.of(context);
-    return Container(
+    return PattoSurface(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(
-          alpha: 0.35,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
+      muted: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -856,7 +856,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final items = <({String label, IconData icon, _SettingsSection section})>[
       (label: '同期', icon: Icons.sync, section: _SettingsSection.sync),
       (
-        label: 'クイック起動',
+        label: '起動と操作',
         icon: Icons.flash_on_outlined,
         section: _SettingsSection.quickLaunch,
       ),
@@ -868,49 +868,114 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       (label: 'タグ', icon: Icons.sell_outlined, section: _SettingsSection.tags),
       (label: 'AI', icon: Icons.auto_awesome, section: _SettingsSection.ai),
       (
-        label: 'プロンプト',
+        label: '編集プリセット',
         icon: Icons.tune_outlined,
-        section: _SettingsSection.prompts,
+        section: _SettingsSection.editPrompts,
+      ),
+      (
+        label: 'タイトル付け',
+        icon: Icons.smart_toy_outlined,
+        section: _SettingsSection.titlePrompts,
+      ),
+      (
+        label: 'AIチャット文面',
+        icon: Icons.chat_bubble_outline,
+        section: _SettingsSection.chatPrompts,
       ),
     ];
 
-    return Container(
-      width: 220,
-      margin: const EdgeInsets.fromLTRB(16, 16, 0, 16),
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 6, 10, 12),
-            child: Text(
-              '設定メニュー',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-          ),
-          for (final item in items)
+    return SizedBox(
+      width: 208,
+      child: PattoSurface(
+        margin: const EdgeInsets.fromLTRB(12, 12, 0, 12),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+        floating: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
             Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: FilledButton.tonalIcon(
-                style: FilledButton.styleFrom(
-                  alignment: Alignment.centerLeft,
-                  backgroundColor: _selectedSection == item.section
-                      ? Theme.of(context).colorScheme.primaryContainer
-                      : Theme.of(context).colorScheme.surface,
-                  foregroundColor: _selectedSection == item.section
-                      ? Theme.of(context).colorScheme.onPrimaryContainer
-                      : Theme.of(context).colorScheme.onSurface,
-                ),
-                onPressed: () => _jumpToSection(item.section),
-                icon: Icon(item.icon, size: 18),
-                label: Text(item.label),
+              padding: const EdgeInsets.fromLTRB(10, 6, 10, 12),
+              child: Text(
+                '設定メニュー',
+                style: Theme.of(context).textTheme.titleSmall,
               ),
             ),
+            for (final item in items)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(
+                    alignment: Alignment.centerLeft,
+                    backgroundColor: _selectedSection == item.section
+                        ? Theme.of(context).colorScheme.primaryContainer
+                        : Theme.of(context).colorScheme.surface,
+                    foregroundColor: _selectedSection == item.section
+                        ? Theme.of(context).colorScheme.onPrimaryContainer
+                        : Theme.of(context).colorScheme.onSurface,
+                  ),
+                  onPressed: () => _jumpToSection(item.section),
+                  icon: Icon(item.icon, size: 18),
+                  label: Text(item.label),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThemeOption({
+    required BuildContext context,
+    required AppThemeStyle value,
+    required AppThemeStyle selected,
+    required String title,
+    required String description,
+    required List<Color> previewColors,
+  }) {
+    final isSelected = value == selected;
+    return PattoSurface(
+      selected: isSelected,
+      muted: !isSelected,
+      floating: isSelected,
+      onTap: () => ref.read(appSettingsProvider.notifier).setThemeStyle(value),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              if (isSelected)
+                Icon(
+                  Icons.check_circle_rounded,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(description, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              for (final color in previewColors) ...[
+                Expanded(
+                  child: Container(
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+                if (color != previewColors.last) const SizedBox(width: 8),
+              ],
+            ],
+          ),
         ],
       ),
     );
@@ -923,7 +988,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _syncAiImageLimit(settings.aiImageSendLimit);
     _syncChatSystemPromptControllers(settings.aiChatSystemPrompts);
     _scheduleAutoLoadLocalModels(settings);
-    final isWide = MediaQuery.sizeOf(context).width >= 1120;
+    final isWide = MediaQuery.sizeOf(context).width >= 900;
     final supabaseConfig = ref.watch(supabaseConfigProvider);
     final userIdAsync = ref.watch(authUserIdStreamProvider);
     final pendingConflicts = ref.watch(syncConflictsProvider);
@@ -1014,8 +1079,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final quickLaunchSection = _buildSectionCard(
       context: context,
       key: _quickLaunchSectionKey,
-      title: 'クイック起動',
-      description: '起動時にどのメモを開くか、macOSショートカットを設定します。',
+      title: '起動とショートカット',
+      description: '起動時の開き方と、macOS の表示ショートカットを設定します。',
       children: [
         ListTile(
           contentPadding: EdgeInsets.zero,
@@ -1109,6 +1174,69 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       title: '表示',
       description: '本文まわりの見え方を調整します。',
       children: [
+        _buildGroupLabel(
+          context,
+          title: '明るさ',
+          description: 'ライト表示とダーク表示を切り替えます。',
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('ダークモード'),
+          subtitle: const Text('背景や面の色を暗めに切り替えます。'),
+          value: settings.darkModeEnabled,
+          onChanged: (value) =>
+              ref.read(appSettingsProvider.notifier).setDarkModeEnabled(value),
+        ),
+        const SizedBox(height: 12),
+        _buildGroupLabel(
+          context,
+          title: 'テーマ',
+          description: '見た目の柔らかさを 2 つのスタイルから選べます。',
+        ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final options = [
+              _buildThemeOption(
+                context: context,
+                value: AppThemeStyle.softPastel,
+                selected: settings.themeStyle,
+                title: 'Soft Pastel',
+                description: 'ミントとピーチのやわらかな雰囲気',
+                previewColors: const [
+                  Color(0xFFDCEDE2),
+                  Color(0xFFF4E3D8),
+                  Color(0xFFDCE9F0),
+                ],
+              ),
+              _buildThemeOption(
+                context: context,
+                value: AppThemeStyle.plainSoft,
+                selected: settings.themeStyle,
+                title: 'Plain Soft',
+                description: '生成りとグレージュの落ち着いた雰囲気',
+                previewColors: const [
+                  Color(0xFFDCE4EE),
+                  Color(0xFFEFE2D2),
+                  Color(0xFFDCEBE4),
+                ],
+              ),
+            ];
+            if (constraints.maxWidth < 720) {
+              return Column(
+                children: [options[0], const SizedBox(height: 12), options[1]],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: options[0]),
+                const SizedBox(width: 12),
+                Expanded(child: options[1]),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 16),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('本文の文字数を表示'),
@@ -1420,17 +1548,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ],
     );
 
-    final promptSection = _buildSectionCard(
+    final editPromptSection = _buildSectionCard(
       context: context,
-      key: _promptSectionKey,
-      title: 'プロンプト設定',
-      description: '用途ごとにまとまるよう、プリセット・タイトル・AI Chatを分けています。',
+      key: _editPromptSectionKey,
+      title: '編集プリセット',
+      description: 'AI編集で呼び出すプリセットをまとめて管理します。',
       children: [
-        _buildGroupLabel(
-          context,
-          title: 'カスタムプロンプト',
-          description: 'AI編集で呼び出すプリセットです。',
-        ),
         for (var i = 0; i < 6; i++)
           _buildPromptEditorCard(
             context: context,
@@ -1443,12 +1566,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             promptHint: '例: この本文を簡潔に要約する',
             onChanged: _schedulePresetSave,
           ),
-        const SizedBox(height: 8),
-        _buildGroupLabel(
-          context,
-          title: 'タイトル付けルール',
-          description: 'タイトル横のロボットボタンから使うルールです。',
-        ),
+      ],
+    );
+
+    final titlePromptSection = _buildSectionCard(
+      context: context,
+      key: _titlePromptSectionKey,
+      title: 'タイトル付けプロンプト',
+      description: 'タイトル横のロボットボタンから使うルールです。',
+      children: [
         for (var i = 0; i < 3; i++)
           _buildPromptEditorCard(
             context: context,
@@ -1462,12 +1588,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onChanged: _scheduleTitleRuleSave,
             helperText: '{{today}} は 20260413 形式で展開されます',
           ),
-        const SizedBox(height: 8),
-        _buildGroupLabel(
-          context,
-          title: 'AI Chat システムプロンプト',
-          description: 'AIチャット画面のヘッダーから切り替える設定です。',
-        ),
+      ],
+    );
+
+    final chatPromptSection = _buildSectionCard(
+      context: context,
+      key: _chatPromptSectionKey,
+      title: 'AIチャットプロンプト',
+      description: 'AIチャット画面のヘッダーから切り替える設定です。本文参照はチャット上部のアイコンでON/OFFできます。',
+      children: [
         for (var i = 0; i < 3; i++)
           _buildPromptEditorCard(
             context: context,
@@ -1488,36 +1617,55 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final scrollableContent = Scrollbar(
       controller: _scrollController,
       thumbVisibility: isWide,
-      child: ListView(
-        controller: _scrollController,
-        padding: const EdgeInsets.all(16),
-        children: [
-          syncSection,
-          quickLaunchSection,
-          displaySection,
-          tagSection,
-          aiSection,
-          promptSection,
-        ],
+      child: ColoredBox(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: SingleChildScrollView(
+          controller: _scrollController,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              syncSection,
+              quickLaunchSection,
+              displaySection,
+              tagSection,
+              aiSection,
+              editPromptSection,
+              titlePromptSection,
+              chatPromptSection,
+            ],
+          ),
+        ),
       ),
     );
 
+    final bodyContent = isWide
+        ? Row(
+            children: [
+              _buildDesktopNav(),
+              const VerticalDivider(width: 1),
+              Expanded(child: scrollableContent),
+            ],
+          )
+        : scrollableContent;
+
     return Scaffold(
       appBar: AppBar(title: const Text('設定')),
-      body: isWide
-          ? Row(
-              children: [
-                _buildDesktopNav(),
-                const VerticalDivider(width: 1),
-                Expanded(child: scrollableContent),
-              ],
-            )
-          : scrollableContent,
+      body: bodyContent,
     );
   }
 }
 
-enum _SettingsSection { sync, quickLaunch, display, tags, ai, prompts }
+enum _SettingsSection {
+  sync,
+  quickLaunch,
+  display,
+  tags,
+  ai,
+  editPrompts,
+  titlePrompts,
+  chatPrompts,
+}
 
 enum _ConflictChoice { keepLocal, keepRemote, later }
 

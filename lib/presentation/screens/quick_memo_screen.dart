@@ -19,11 +19,13 @@ import '../providers/notes_providers.dart';
 import '../providers/quick_launch_provider.dart';
 import '../providers/quick_memo_provider.dart';
 import '../providers/tag_dictionary_repository_provider.dart';
+import '../theme/patto_theme.dart';
 import '../widgets/app_input_decoration.dart';
 import '../widgets/ai_prompt_presets_hover_menu.dart';
-import '../widgets/reorderable_icon_toolbar.dart';
 import '../widgets/inline_attachment_controller.dart';
 import '../widgets/inline_attachment_view.dart';
+import '../widgets/patto_surface.dart';
+import '../widgets/reorderable_icon_toolbar.dart';
 import 'external_paste_guard.dart';
 import 'note_editor_pane.dart';
 
@@ -906,6 +908,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(quickMemoControllerProvider);
     final settings = ref.watch(appSettingsProvider);
+    final theme = Theme.of(context);
     final draftNoteAsync = state.currentDraftId == null
         ? const AsyncValue<Note?>.data(null)
         : ref.watch(noteByIdProvider(state.currentDraftId!));
@@ -1062,138 +1065,159 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
           if (note == null) return;
           await _handleDrop(note, details.files);
         },
-        child: Stack(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                children: [
-                  if (hasTagBar)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          if (_aiTagSuggesting)
-                            const Chip(label: Text('AI提案中…')),
-                          if (draftNote != null)
-                            for (final tag in draftNote.manualTags)
-                              InputChip(
-                                label: Text('#${_normalizeTag(tag)}'),
-                                onDeleted: () =>
-                                    _removeManualTag(draftNote, tag),
-                              ),
-                          if (draftNote != null)
-                            for (final tag in draftNote.autoTags)
-                              InputChip(
-                                label: Text('#${_normalizeTag(tag)}'),
-                                backgroundColor: Theme.of(
-                                  context,
-                                ).colorScheme.secondaryContainer,
-                                onDeleted: () => _removeAutoTag(draftNote, tag),
-                              ),
-                          if (draftNote != null)
-                            for (final tag in _aiSuggestedTags)
-                              ActionChip(
-                                label: Text('提案: #${_normalizeTag(tag)}'),
-                                onPressed: () => _applyAutoTag(draftNote, tag),
-                              ),
-                        ],
-                      ),
-                    ),
-                  Expanded(
-                    child: Stack(
-                      children: [
-                        Focus(
-                          onKeyEvent: (node, event) {
-                            if (_handleEnterKey(event)) {
-                              return KeyEventResult.handled;
-                            }
-                            return KeyEventResult.ignored;
-                          },
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              _editorWidth =
-                                  constraints.maxWidth -
-                                  _editorContentPadding.horizontal;
-                              if (_editorWidth < 0) _editorWidth = 0;
-                              return TextField(
-                                controller: _controller,
-                                focusNode: _focusNode,
-                                maxLines: null,
-                                expands: true,
-                                textAlign: TextAlign.left,
-                                textAlignVertical: TextAlignVertical.top,
-                                decoration:
-                                    appInputDecoration(
-                                      hintText: 'クイックメモを書く…',
-                                    ).copyWith(
-                                      contentPadding: _editorContentPadding,
+        child: ColoredBox(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: PattoSurface(
+                  padding: const EdgeInsets.all(16),
+                  floating: true,
+                  color: context.pattoTokens.panelStrongColor,
+                  child: Column(
+                    children: [
+                      if (hasTagBar)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                if (_aiTagSuggesting)
+                                  const Chip(label: Text('AI提案中…')),
+                                if (draftNote != null)
+                                  for (final tag in draftNote.manualTags)
+                                    InputChip(
+                                      label: Text('#${_normalizeTag(tag)}'),
+                                      onDeleted: () =>
+                                          _removeManualTag(draftNote, tag),
                                     ),
-                                onChanged: (value) => ref
-                                    .read(quickMemoControllerProvider.notifier)
-                                    .updateContent(value),
-                                contextMenuBuilder:
-                                    (context, editableTextState) {
-                                      return _buildTextContextMenu(
-                                        context,
-                                        editableTextState,
-                                      );
-                                    },
-                              );
-                            },
-                          ),
-                        ),
-                        if (settings.charCountEnabled)
-                          Positioned(
-                            right: 8,
-                            bottom: 6,
-                            child: ValueListenableBuilder<TextEditingValue>(
-                              valueListenable: _controller,
-                              builder: (context, value, _) {
-                                final count = _countText(
-                                  value.text,
-                                  settings.charCountExcludeSymbols,
-                                );
-                                final suffix = settings.charCountExcludeSymbols
-                                    ? '（記号含まず）'
-                                    : '';
-                                return Text(
-                                  '$count$suffix',
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                      ),
-                                );
-                              },
+                                if (draftNote != null)
+                                  for (final tag in draftNote.autoTags)
+                                    InputChip(
+                                      label: Text('#${_normalizeTag(tag)}'),
+                                      backgroundColor:
+                                          theme.colorScheme.secondaryContainer,
+                                      onDeleted: () =>
+                                          _removeAutoTag(draftNote, tag),
+                                    ),
+                                if (draftNote != null)
+                                  for (final tag in _aiSuggestedTags)
+                                    ActionChip(
+                                      label: Text('提案: #${_normalizeTag(tag)}'),
+                                      onPressed: () =>
+                                          _applyAutoTag(draftNote, tag),
+                                    ),
+                              ],
                             ),
                           ),
-                      ],
-                    ),
+                        ),
+                      Expanded(
+                        child: PattoSurface(
+                          padding: const EdgeInsets.all(14),
+                          muted: true,
+                          child: Stack(
+                            children: [
+                              Focus(
+                                onKeyEvent: (node, event) {
+                                  if (_handleEnterKey(event)) {
+                                    return KeyEventResult.handled;
+                                  }
+                                  return KeyEventResult.ignored;
+                                },
+                                child: LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    _editorWidth =
+                                        constraints.maxWidth -
+                                        _editorContentPadding.horizontal;
+                                    if (_editorWidth < 0) _editorWidth = 0;
+                                    return TextField(
+                                      controller: _controller,
+                                      focusNode: _focusNode,
+                                      maxLines: null,
+                                      expands: true,
+                                      textAlign: TextAlign.left,
+                                      textAlignVertical: TextAlignVertical.top,
+                                      decoration:
+                                          appInputDecoration(
+                                            hintText: 'クイックメモを書く…',
+                                          ).copyWith(
+                                            contentPadding:
+                                                _editorContentPadding,
+                                          ),
+                                      onChanged: (value) => ref
+                                          .read(
+                                            quickMemoControllerProvider
+                                                .notifier,
+                                          )
+                                          .updateContent(value),
+                                      contextMenuBuilder:
+                                          (context, editableTextState) {
+                                            return _buildTextContextMenu(
+                                              context,
+                                              editableTextState,
+                                            );
+                                          },
+                                    );
+                                  },
+                                ),
+                              ),
+                              if (settings.charCountEnabled)
+                                Positioned(
+                                  right: 8,
+                                  bottom: 6,
+                                  child:
+                                      ValueListenableBuilder<TextEditingValue>(
+                                        valueListenable: _controller,
+                                        builder: (context, value, _) {
+                                          final count = _countText(
+                                            value.text,
+                                            settings.charCountExcludeSymbols,
+                                          );
+                                          final suffix =
+                                              settings.charCountExcludeSymbols
+                                              ? '（記号含まず）'
+                                              : '';
+                                          return Text(
+                                            '$count$suffix',
+                                            style: theme.textTheme.bodySmall,
+                                          );
+                                        },
+                                      ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
-            if (_isDragOver)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.primary.withValues(alpha: 0.08),
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.primary,
-                        width: 2,
+              if (_isDragOver)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary.withValues(
+                            alpha: 0.08,
+                          ),
+                          borderRadius: BorderRadius.circular(28),
+                          border: Border.all(
+                            color: theme.colorScheme.primary,
+                            width: 2,
+                          ),
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );

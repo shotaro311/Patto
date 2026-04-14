@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/auth_providers.dart';
 import '../widgets/app_input_decoration.dart';
+import '../widgets/patto_surface.dart';
 
 class AuthScreen extends ConsumerStatefulWidget {
   const AuthScreen({super.key});
@@ -32,8 +33,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('エラー: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('エラー: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -45,65 +47,105 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     if (auth == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('ログイン')),
-        body: const Center(child: Text('Supabaseが未設定です')),
+        body: ColoredBox(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          child: const Center(child: Text('Supabaseが未設定です')),
+        ),
       );
     }
 
     return Scaffold(
       appBar: AppBar(title: const Text('ログイン')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          TextField(
-            controller: _emailController,
-            decoration: appInputDecoration(labelText: 'メールアドレス'),
-            keyboardType: TextInputType.emailAddress,
-            autofillHints: const [AutofillHints.email],
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _passwordController,
-            decoration: appInputDecoration(labelText: 'パスワード'),
-            obscureText: true,
-            autofillHints: const [AutofillHints.password],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton(
-                  onPressed: _busy
-                      ? null
-                      : () => _run(() {
-                            final email = _emailController.text.trim();
-                            final pass = _passwordController.text;
-                            return auth.signInWithEmail(email: email, password: pass);
-                          }),
-                  child: _busy
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('ログイン'),
+      body: ColoredBox(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                PattoSurface(
+                  padding: const EdgeInsets.all(24),
+                  floating: true,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'アカウント接続',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '同期を使うときだけログインすれば大丈夫です。',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 20),
+                      TextField(
+                        controller: _emailController,
+                        decoration: appInputDecoration(labelText: 'メールアドレス'),
+                        keyboardType: TextInputType.emailAddress,
+                        autofillHints: const [AutofillHints.email],
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _passwordController,
+                        decoration: appInputDecoration(labelText: 'パスワード'),
+                        obscureText: true,
+                        autofillHints: const [AutofillHints.password],
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: _busy
+                                  ? null
+                                  : () => _run(() {
+                                      final email = _emailController.text
+                                          .trim();
+                                      final pass = _passwordController.text;
+                                      return auth.signInWithEmail(
+                                        email: email,
+                                        password: pass,
+                                      );
+                                    }),
+                              child: _busy
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Text('ログイン'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: _busy
+                                  ? null
+                                  : () => _run(() {
+                                      final email = _emailController.text
+                                          .trim();
+                                      final pass = _passwordController.text;
+                                      return auth.signUpWithEmail(
+                                        email: email,
+                                        password: pass,
+                                      );
+                                    }),
+                              child: const Text('新規登録'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _busy
-                      ? null
-                      : () => _run(() {
-                            final email = _emailController.text.trim();
-                            final pass = _passwordController.text;
-                            return auth.signUpWithEmail(email: email, password: pass);
-                          }),
-                  child: const Text('新規登録'),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
   }

@@ -6,6 +6,8 @@ enum AiPromptSendKey { enter, ctrlEnter }
 
 enum AiExternalProvider { gemini, openAiCompatible }
 
+enum AppThemeStyle { softPastel, plainSoft }
+
 class MacKeyBinding {
   const MacKeyBinding({
     required this.keyCode,
@@ -129,6 +131,8 @@ class AppSettings {
 
   const AppSettings({
     required this.clientId,
+    required this.themeStyle,
+    required this.darkModeEnabled,
     required this.syncEnabled,
     required this.quickLaunchOpenMode,
     required this.macModifierKey,
@@ -153,6 +157,8 @@ class AppSettings {
   });
 
   final String clientId;
+  final AppThemeStyle themeStyle;
+  final bool darkModeEnabled;
   final bool syncEnabled;
   final QuickLaunchOpenMode quickLaunchOpenMode;
   final MacModifierKey macModifierKey;
@@ -178,6 +184,8 @@ class AppSettings {
   bool get aiEnabled => aiAppleIntelligenceEnabled || aiExternalApiEnabled;
 
   AppSettings copyWith({
+    AppThemeStyle? themeStyle,
+    bool? darkModeEnabled,
     bool? syncEnabled,
     QuickLaunchOpenMode? quickLaunchOpenMode,
     MacModifierKey? macModifierKey,
@@ -202,6 +210,8 @@ class AppSettings {
   }) {
     return AppSettings(
       clientId: clientId,
+      themeStyle: themeStyle ?? this.themeStyle,
+      darkModeEnabled: darkModeEnabled ?? this.darkModeEnabled,
       syncEnabled: syncEnabled ?? this.syncEnabled,
       quickLaunchOpenMode: quickLaunchOpenMode ?? this.quickLaunchOpenMode,
       macModifierKey: macModifierKey ?? this.macModifierKey,
@@ -250,6 +260,22 @@ extension QuickLaunchOpenModeCodec on QuickLaunchOpenMode {
     return switch (this) {
       QuickLaunchOpenMode.newNote => 'newNote',
       QuickLaunchOpenMode.lastNote => 'lastNote',
+    };
+  }
+}
+
+extension AppThemeStyleCodec on AppThemeStyle {
+  static AppThemeStyle fromString(String? raw) {
+    return switch (raw) {
+      'plainSoft' => AppThemeStyle.plainSoft,
+      _ => AppThemeStyle.softPastel,
+    };
+  }
+
+  String toStorageString() {
+    return switch (this) {
+      AppThemeStyle.softPastel => 'softPastel',
+      AppThemeStyle.plainSoft => 'plainSoft',
     };
   }
 }
