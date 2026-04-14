@@ -1,19 +1,10 @@
-enum QuickLaunchOpenMode {
-  newNote,
-  lastNote,
-}
+enum QuickLaunchOpenMode { newNote, lastNote }
 
-enum MacModifierKey {
-  command,
-  control,
-  option,
-  shift,
-}
+enum MacModifierKey { command, control, option, shift }
 
-enum AiPromptSendKey {
-  enter,
-  ctrlEnter,
-}
+enum AiPromptSendKey { enter, ctrlEnter }
+
+enum AiExternalProvider { gemini, openAiCompatible }
 
 class MacKeyBinding {
   const MacKeyBinding({
@@ -71,10 +62,7 @@ class MacKeyBinding {
 }
 
 class AiPromptPreset {
-  const AiPromptPreset({
-    required this.name,
-    required this.prompt,
-  });
+  const AiPromptPreset({required this.name, required this.prompt});
 
   final String name;
   final String prompt;
@@ -82,10 +70,7 @@ class AiPromptPreset {
   bool get isEmpty => name.trim().isEmpty || prompt.trim().isEmpty;
 
   Map<String, dynamic> toMap() {
-    return {
-      'name': name,
-      'prompt': prompt,
-    };
+    return {'name': name, 'prompt': prompt};
   }
 
   static AiPromptPreset? fromMap(Object? raw) {
@@ -94,6 +79,48 @@ class AiPromptPreset {
     final prompt = raw['prompt'];
     if (name is! String || prompt is! String) return null;
     return AiPromptPreset(name: name, prompt: prompt);
+  }
+}
+
+class AiTitleRule {
+  const AiTitleRule({required this.name, required this.prompt});
+
+  final String name;
+  final String prompt;
+
+  bool get isEmpty => name.trim().isEmpty || prompt.trim().isEmpty;
+
+  Map<String, dynamic> toMap() {
+    return {'name': name, 'prompt': prompt};
+  }
+
+  static AiTitleRule? fromMap(Object? raw) {
+    if (raw is! Map) return null;
+    final name = raw['name'];
+    final prompt = raw['prompt'];
+    if (name is! String || prompt is! String) return null;
+    return AiTitleRule(name: name, prompt: prompt);
+  }
+}
+
+class AiChatSystemPrompt {
+  const AiChatSystemPrompt({required this.name, required this.prompt});
+
+  final String name;
+  final String prompt;
+
+  bool get isEmpty => name.trim().isEmpty || prompt.trim().isEmpty;
+
+  Map<String, dynamic> toMap() {
+    return {'name': name, 'prompt': prompt};
+  }
+
+  static AiChatSystemPrompt? fromMap(Object? raw) {
+    if (raw is! Map) return null;
+    final name = raw['name'];
+    final prompt = raw['prompt'];
+    if (name is! String || prompt is! String) return null;
+    return AiChatSystemPrompt(name: name, prompt: prompt);
   }
 }
 
@@ -110,10 +137,16 @@ class AppSettings {
     required this.charCountExcludeSymbols,
     required this.aiAppleIntelligenceEnabled,
     required this.aiExternalApiEnabled,
+    required this.aiExternalProvider,
+    required this.aiExternalBaseUrl,
+    required this.aiExternalModel,
     required this.aiPreviewEnabled,
     required this.aiEditKeyBinding,
     required this.aiPromptSendKey,
     required this.aiPromptPresets,
+    required this.aiTitleRules,
+    required this.aiChatSystemPrompts,
+    required this.aiChatContextWindowSize,
     required this.aiImageSendLimit,
     required this.lastOpenedNoteId,
     required this.lastSyncAt,
@@ -128,10 +161,16 @@ class AppSettings {
   final bool charCountExcludeSymbols;
   final bool aiAppleIntelligenceEnabled;
   final bool aiExternalApiEnabled;
+  final AiExternalProvider aiExternalProvider;
+  final String aiExternalBaseUrl;
+  final String aiExternalModel;
   final bool aiPreviewEnabled;
   final MacKeyBinding? aiEditKeyBinding;
   final AiPromptSendKey aiPromptSendKey;
   final List<AiPromptPreset> aiPromptPresets;
+  final List<AiTitleRule> aiTitleRules;
+  final List<AiChatSystemPrompt> aiChatSystemPrompts;
+  final int aiChatContextWindowSize;
   final int aiImageSendLimit;
   final String? lastOpenedNoteId;
   final DateTime? lastSyncAt;
@@ -147,10 +186,16 @@ class AppSettings {
     bool? charCountExcludeSymbols,
     bool? aiAppleIntelligenceEnabled,
     bool? aiExternalApiEnabled,
+    AiExternalProvider? aiExternalProvider,
+    String? aiExternalBaseUrl,
+    String? aiExternalModel,
     bool? aiPreviewEnabled,
     Object? aiEditKeyBinding = _unset,
     AiPromptSendKey? aiPromptSendKey,
     List<AiPromptPreset>? aiPromptPresets,
+    List<AiTitleRule>? aiTitleRules,
+    List<AiChatSystemPrompt>? aiChatSystemPrompts,
+    int? aiChatContextWindowSize,
     int? aiImageSendLimit,
     Object? lastOpenedNoteId = _unset,
     Object? lastSyncAt = _unset,
@@ -168,14 +213,20 @@ class AppSettings {
           charCountExcludeSymbols ?? this.charCountExcludeSymbols,
       aiAppleIntelligenceEnabled:
           aiAppleIntelligenceEnabled ?? this.aiAppleIntelligenceEnabled,
-      aiExternalApiEnabled:
-          aiExternalApiEnabled ?? this.aiExternalApiEnabled,
+      aiExternalApiEnabled: aiExternalApiEnabled ?? this.aiExternalApiEnabled,
+      aiExternalProvider: aiExternalProvider ?? this.aiExternalProvider,
+      aiExternalBaseUrl: aiExternalBaseUrl ?? this.aiExternalBaseUrl,
+      aiExternalModel: aiExternalModel ?? this.aiExternalModel,
       aiPreviewEnabled: aiPreviewEnabled ?? this.aiPreviewEnabled,
       aiEditKeyBinding: identical(aiEditKeyBinding, _unset)
           ? this.aiEditKeyBinding
           : aiEditKeyBinding as MacKeyBinding?,
       aiPromptSendKey: aiPromptSendKey ?? this.aiPromptSendKey,
       aiPromptPresets: aiPromptPresets ?? this.aiPromptPresets,
+      aiTitleRules: aiTitleRules ?? this.aiTitleRules,
+      aiChatSystemPrompts: aiChatSystemPrompts ?? this.aiChatSystemPrompts,
+      aiChatContextWindowSize:
+          aiChatContextWindowSize ?? this.aiChatContextWindowSize,
       aiImageSendLimit: aiImageSendLimit ?? this.aiImageSendLimit,
       lastOpenedNoteId: identical(lastOpenedNoteId, _unset)
           ? this.lastOpenedNoteId
@@ -240,6 +291,22 @@ extension AiPromptSendKeyCodec on AiPromptSendKey {
     return switch (this) {
       AiPromptSendKey.enter => 'enter',
       AiPromptSendKey.ctrlEnter => 'ctrlEnter',
+    };
+  }
+}
+
+extension AiExternalProviderCodec on AiExternalProvider {
+  static AiExternalProvider fromString(String? raw) {
+    return switch (raw) {
+      'openAiCompatible' => AiExternalProvider.openAiCompatible,
+      _ => AiExternalProvider.gemini,
+    };
+  }
+
+  String toStorageString() {
+    return switch (this) {
+      AiExternalProvider.gemini => 'gemini',
+      AiExternalProvider.openAiCompatible => 'openAiCompatible',
     };
   }
 }

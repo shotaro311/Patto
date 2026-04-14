@@ -22,7 +22,14 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
       name: "com.patto/quick_launch",
       binaryMessenger: flutterViewController.engine.binaryMessenger
     )
-    let monitor = QuickLaunchMonitor(channel: channel, window: self)
+    let cbMonitor = ClipboardMonitor(channel: channel)
+    clipboardMonitor = cbMonitor
+
+    let monitor = QuickLaunchMonitor(
+      channel: channel,
+      window: self,
+      onPasteIntent: { cbMonitor.registerPasteIntent() }
+    )
     quickLaunchMonitor = monitor
 
     let aiChannel = FlutterMethodChannel(
@@ -30,9 +37,12 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
       binaryMessenger: flutterViewController.engine.binaryMessenger
     )
     let aiBridge = AppleIntelligenceBridge()
+    let clipboardMediaChannel = FlutterMethodChannel(
+      name: "com.patto/clipboard_media",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    let clipboardMediaBridge = ClipboardMediaBridge()
 
-    let cbMonitor = ClipboardMonitor(channel: channel)
-    clipboardMonitor = cbMonitor
     cbMonitor.start()
 
     channel.setMethodCallHandler { call, result in
@@ -59,6 +69,10 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
       aiBridge.handle(call, result: result)
     }
 
+    clipboardMediaChannel.setMethodCallHandler { call, result in
+      clipboardMediaBridge.handle(call, result: result)
+    }
+
     super.awakeFromNib()
   }
 
@@ -68,9 +82,44 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
   }
 }
 
+final class ClipboardMediaBridge {
+  func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
+    case "readImagePng":
+      readImagePng(result: result)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func readImagePng(result: @escaping FlutterResult) {
+    let pasteboard = NSPasteboard.general
+    guard let image = NSImage(pasteboard: pasteboard) else {
+      result(nil)
+      return
+    }
+    guard
+      let tiff = image.tiffRepresentation,
+      let bitmap = NSBitmapImageRep(data: tiff),
+      let png = bitmap.representation(using: .png, properties: [:])
+    else {
+      result(
+        FlutterError(
+          code: "clipboard_image_encode_failed",
+          message: "クリップボード画像をPNGに変換できませんでした",
+          details: nil
+        )
+      )
+      return
+    }
+    result(FlutterStandardTypedData(bytes: png))
+  }
+}
+
 final class QuickLaunchMonitor {
   private let channel: FlutterMethodChannel
   private weak var window: NSWindow?
+  private let onPasteIntent: () -> Void
 
   private var showHideModifierKey: ModifierKey = .command
   private var showHideKeyBinding: KeyBinding?
@@ -84,9 +133,14 @@ final class QuickLaunchMonitor {
   private var lastKeyEventCode: UInt16 = 0
   private var showHideTapState = TapState()
 
-  init(channel: FlutterMethodChannel, window: NSWindow) {
+  init(
+    channel: FlutterMethodChannel,
+    window: NSWindow,
+    onPasteIntent: @escaping () -> Void
+  ) {
     self.channel = channel
     self.window = window
+    self.onPasteIntent = onPasteIntent
   }
 
   func configure(
@@ -228,6 +282,11 @@ final class QuickLaunchMonitor {
   }
 
   private func handleKeyDownEvent(_ event: NSEvent) {
+    registerPasteIntentIfNeeded(
+      keyCode: event.keyCode,
+      command: event.modifierFlags.contains(.command),
+      control: event.modifierFlags.contains(.control)
+    )
     let handled = handleKeyBinding(
       keyCode: event.keyCode,
       command: event.modifierFlags.contains(.command),
@@ -253,6 +312,15 @@ final class QuickLaunchMonitor {
     if !handled {
       resetTapState()
     }
+  }
+
+  private func registerPasteIntentIfNeeded(
+    keyCode: UInt16,
+    command: Bool,
+    control: Bool
+  ) {
+    guard command, !control, keyCode == 9 else { return }
+    onPasteIntent()
   }
 
   private func handleModifierKeyDown(
@@ -531,9 +599,20 @@ final class ClipboardMonitor {
   private var contentBeforeLastChange: String?
   private var lastChangeAt: TimeInterval = 0
   private let restoreWindow: TimeInterval = 0.8
+  private let pasteIntentWindow: TimeInterval = 1.0
+  private var lastPasteIntentAt: TimeInterval = 0
+  private var pendingPasteContent: String?
+  private var pendingPasteAt: TimeInterval = 0
 
   init(channel: FlutterMethodChannel) {
     self.channel = channel
+  }
+
+  func registerPasteIntent() {
+    guard NSApp.isActive, !NSApp.isHidden else { return }
+    let now = ProcessInfo.processInfo.systemUptime
+    lastPasteIntentAt = now
+    notifyPendingPasteIfNeeded(now: now)
   }
 
   func start() {
@@ -547,14 +626,18 @@ final class ClipboardMonitor {
     lastClipboardContent = initialContent
     contentBeforeLastChange = nil
     lastChangeAt = ProcessInfo.processInfo.systemUptime
+    lastPasteIntentAt = 0
+    pendingPasteContent = nil
+    pendingPasteAt = 0
 
     timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
       guard let self = self else { return }
+      let now = ProcessInfo.processInfo.systemUptime
+      self.expirePendingPasteIfNeeded(now: now)
       let currentCount = pasteboard.changeCount
 
       if currentCount != self.lastChangeCount {
         self.lastChangeCount = currentCount
-        let now = ProcessInfo.processInfo.systemUptime
         let content = pasteboard.string(forType: .string)
         if content == self.lastClipboardContent {
           self.lastChangeAt = now
@@ -574,11 +657,7 @@ final class ClipboardMonitor {
 
         // アプリがアクティブな場合のみFlutter側に通知
         if NSApp.isActive, let content, !shouldIgnoreRestore {
-          // 直前に通知したコンテンツと同じ場合は通知しない
-          if content != self.lastNotifiedContent {
-            self.lastNotifiedContent = content
-            self.channel.invokeMethod("onExternalPaste", arguments: ["content": content])
-          }
+          self.handleClipboardChange(content: content, now: now)
         }
       }
     }
@@ -587,5 +666,50 @@ final class ClipboardMonitor {
   func stop() {
     timer?.invalidate()
     timer = nil
+  }
+
+  private func handleClipboardChange(content: String, now: TimeInterval) {
+    guard !content.isEmpty else {
+      clearPendingPaste()
+      return
+    }
+    guard content != lastNotifiedContent else {
+      clearPendingPaste()
+      return
+    }
+    if now - lastPasteIntentAt <= pasteIntentWindow {
+      notify(content: content)
+      return
+    }
+    pendingPasteContent = content
+    pendingPasteAt = now
+  }
+
+  private func notifyPendingPasteIfNeeded(now: TimeInterval) {
+    guard let content = pendingPasteContent else { return }
+    guard now - pendingPasteAt <= pasteIntentWindow else {
+      clearPendingPaste()
+      return
+    }
+    notify(content: content)
+  }
+
+  private func expirePendingPasteIfNeeded(now: TimeInterval) {
+    guard pendingPasteContent != nil else { return }
+    if now - pendingPasteAt > pasteIntentWindow {
+      clearPendingPaste()
+    }
+  }
+
+  private func notify(content: String) {
+    clearPendingPaste()
+    guard content != lastNotifiedContent else { return }
+    lastNotifiedContent = content
+    channel.invokeMethod("onExternalPaste", arguments: ["content": content])
+  }
+
+  private func clearPendingPaste() {
+    pendingPasteContent = nil
+    pendingPasteAt = 0
   }
 }

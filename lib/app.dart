@@ -130,7 +130,6 @@ class _PattoAppState extends ConsumerState<PattoApp>
         _navigatorKey.currentState?.push(
           _buildQuickMemoRoute(
             useMorph: useMorph,
-            showDraftActionSheetOnOpen: false,
             routeSettings: RouteSettings(
               name: '/quick-memo',
               arguments: QuickMemoRouteArgs(useMorph: useMorph),
@@ -165,7 +164,6 @@ class _PattoAppState extends ConsumerState<PattoApp>
 
   Route<void> _buildQuickMemoRoute({
     required bool useMorph,
-    required bool showDraftActionSheetOnOpen,
     RouteSettings? routeSettings,
   }) {
     final settings =
@@ -180,9 +178,7 @@ class _PattoAppState extends ConsumerState<PattoApp>
         transitionDuration: const Duration(milliseconds: 360),
         reverseTransitionDuration: const Duration(milliseconds: 220),
         pageBuilder: (context, animation, secondaryAnimation) =>
-            QuickMemoScreen(
-              showDraftActionSheetOnOpen: showDraftActionSheetOnOpen,
-            ),
+            const QuickMemoScreen(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           final curve = CurvedAnimation(
             parent: animation,
@@ -197,9 +193,8 @@ class _PattoAppState extends ConsumerState<PattoApp>
       settings: settings,
       transitionDuration: const Duration(milliseconds: 220),
       reverseTransitionDuration: const Duration(milliseconds: 180),
-      pageBuilder: (context, animation, secondaryAnimation) => QuickMemoScreen(
-        showDraftActionSheetOnOpen: showDraftActionSheetOnOpen,
-      ),
+      pageBuilder: (context, animation, secondaryAnimation) =>
+          const QuickMemoScreen(),
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
         final curve = CurvedAnimation(
           parent: animation,
@@ -242,7 +237,6 @@ class _PattoAppState extends ConsumerState<PattoApp>
             : const QuickMemoRouteArgs();
         return _buildQuickMemoRoute(
           useMorph: casted.useMorph,
-          showDraftActionSheetOnOpen: casted.showDraftActionSheetOnOpen,
           routeSettings: settings,
         );
       },

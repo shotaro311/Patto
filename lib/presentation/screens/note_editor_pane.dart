@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../data/models/note.dart';
 import '../../domain/app_settings.dart';
 import '../../services/ai_service.dart';
+import '../../services/clipboard_media_service.dart';
 import '../../data/repositories/tag_dictionary_repository.dart';
 import '../providers/attachment_repository_provider.dart';
 import '../providers/ai_providers.dart';
@@ -24,6 +25,7 @@ import '../widgets/app_input_decoration.dart';
 import 'external_paste_guard.dart';
 import '../widgets/animated_dots_text.dart';
 import '../widgets/ai_prompt_presets_hover_menu.dart';
+import '../widgets/ai_title_rules_hover_menu.dart';
 import '../widgets/reorderable_icon_toolbar.dart';
 import '../widgets/top_right_toast.dart';
 import '../widgets/inline_attachment_controller.dart';
@@ -40,6 +42,9 @@ class NoteEditorPane extends ConsumerStatefulWidget {
 
 class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   static const EdgeInsets _editorContentPadding = EdgeInsets.all(12);
+  static const double _minEditorPaneWidth = 320;
+  static const double _minAiChatPaneWidth = 360;
+  static const double _maxAiChatPaneWidth = 720;
   static final RegExp _symbolPattern = RegExp(r'[\p{P}\p{S}]', unicode: true);
   static final RegExp _hashTagPattern = RegExp(
     r'(?<!\w)#([\p{L}\p{N}_-]+)',
@@ -51,7 +56,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   final _titleFocusNode = FocusNode();
   late final InlineAttachmentEditingController _controller;
   late final TextEditingController _titleController;
+  late final TextEditingController _aiChatController;
   late final ExternalPasteGuard _externalPasteGuard;
+  final _aiChatFocusNode = FocusNode();
+  final _aiChatScrollController = ScrollController();
+  final _clipboardMediaService = const ClipboardMediaService();
   ProviderSubscription<int>? _quickLaunchSub;
   ProviderSubscription<int>? _externalPasteSub;
 
@@ -67,15 +76,26 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   bool _editingTitle = false;
   String? _lastDuplicateTitle;
   bool _aiBusy = false;
+  bool _titleAiBusy = false;
   bool _inlineBusy = false;
   int _inlineToken = 0;
+  int _titleAiToken = 0;
   int? _runningPresetIndex;
   AiEditScope _promptScope = AiEditScope.full;
   String _lastScopeKey = '';
   bool _aiImageContextEnabled = false;
   bool _isDragOver = false;
+  bool _isChatDragOver = false;
   Note? _attachmentNote;
   double _editorWidth = 0;
+  bool _aiChatOpen = false;
+  bool _aiChatBusy = false;
+  bool _isResizingAiChat = false;
+  double _aiChatPreferredWidth = 520;
+  int _aiChatToken = 0;
+  int _selectedChatSystemPromptIndex = 0;
+  List<_AiChatMessage> _aiChatMessages = const [];
+  List<_AiChatDraftImage> _aiChatDraftImages = const [];
 
   int _countText(String text, bool excludeSymbols) {
     if (!excludeSymbols) return text.runes.length;
@@ -222,15 +242,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     _controller = InlineAttachmentEditingController(
       attachmentBuilder: (context, attachment, token) {
         final note = _attachmentNote;
-        return _buildInlineAttachment(
-          context,
-          note,
-          attachment,
-          token,
-        );
+        return _buildInlineAttachment(context, note, attachment, token);
       },
     );
     _titleController = TextEditingController();
+    _aiChatController = TextEditingController();
     _externalPasteGuard = ExternalPasteGuard(
       controller: _controller,
       focusNode: _focusNode,
@@ -244,7 +260,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       _markFocusPending(delay: const Duration(milliseconds: 80));
     });
 
-    _externalPasteSub = ref.listenManual<int>(externalPasteEventProvider, (previous, next) {
+    _externalPasteSub = ref.listenManual<int>(externalPasteEventProvider, (
+      previous,
+      next,
+    ) {
       final content = ref.read(externalPasteContentProvider);
       if (content == null || content.isEmpty) return;
       _externalPasteGuard.queueExternalPaste(content, _scheduleSave);
@@ -272,6 +291,12 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       _titleController.text = '';
       _editingTitle = false;
       _lastDuplicateTitle = null;
+      _aiChatController.clear();
+      _aiChatMessages = const [];
+      _aiChatDraftImages = const [];
+      _aiChatOpen = false;
+      _aiChatBusy = false;
+      _selectedChatSystemPromptIndex = 0;
       _markFocusPending();
     }
   }
@@ -285,7 +310,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     _externalPasteSub?.close();
     _controller.dispose();
     _titleController.dispose();
+    _aiChatController.dispose();
     _titleFocusNode.dispose();
+    _aiChatFocusNode.dispose();
+    _aiChatScrollController.dispose();
     _focusNode.dispose();
     super.dispose();
   }
@@ -494,12 +522,12 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     });
   }
 
-  Future<void> _saveTitle(Note note, {required bool exitOnSuccess}) async {
+  Future<bool> _saveTitle(Note note, {required bool exitOnSuccess}) async {
     final next = _titleController.text.trim();
     final current = note.title.trim();
     if (next == current) {
       if (exitOnSuccess && mounted) setState(() => _editingTitle = false);
-      return;
+      return true;
     }
 
     if (next.isNotEmpty) {
@@ -518,7 +546,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
         if (exitOnSuccess && mounted) {
           FocusScope.of(context).requestFocus(_titleFocusNode);
         }
-        return;
+        return false;
       }
     }
 
@@ -526,6 +554,57 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     final repo = ref.read(noteRepositoryProvider);
     await repo.updateTitle(note.uuid, next);
     if (exitOnSuccess && mounted) setState(() => _editingTitle = false);
+    return true;
+  }
+
+  Future<void> _generateTitleWithRule(Note note, AiTitleRule rule) async {
+    if (_titleAiBusy) return;
+
+    final content = _controller.text.trim();
+    if (content.isEmpty) {
+      showTopRightToast(context, '本文が空のためタイトルを生成できません。');
+      return;
+    }
+
+    final settings = ref.read(appSettingsProvider);
+    if (!settings.aiEnabled) {
+      showTopRightToast(context, 'AIを設定で有効化してください。');
+      return;
+    }
+
+    final token = ++_titleAiToken;
+    final previousTitle = note.title;
+    setState(() => _titleAiBusy = true);
+
+    try {
+      final ai = ref.read(aiServiceProvider);
+      final generated = await ai.generateTitle(
+        content: content,
+        rulePrompt: rule.prompt,
+        useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
+        useExternalApi: settings.aiExternalApiEnabled,
+      );
+      if (!mounted || token != _titleAiToken) return;
+
+      _titleController.text = generated;
+      final saved = await _saveTitle(note, exitOnSuccess: false);
+      if (!mounted || token != _titleAiToken) return;
+
+      if (!saved) {
+        _titleController.text = previousTitle;
+        return;
+      }
+      showTopRightToast(context, 'タイトルを生成しました。');
+    } catch (e) {
+      if (!mounted || token != _titleAiToken) return;
+      final message = e is AiException ? e.message : 'タイトル生成に失敗しました。';
+      showTopRightToast(context, message);
+      _titleController.text = previousTitle;
+    } finally {
+      if (mounted && token == _titleAiToken) {
+        setState(() => _titleAiBusy = false);
+      }
+    }
   }
 
   Future<void> _openAiEditDialog({
@@ -636,6 +715,342 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       );
     }
     _scheduleSave();
+  }
+
+  List<_AiChatPromptOption> _chatPromptOptions(AppSettings settings) {
+    final options = <_AiChatPromptOption>[];
+    for (var i = 0; i < settings.aiChatSystemPrompts.length; i++) {
+      final prompt = settings.aiChatSystemPrompts[i];
+      if (prompt.isEmpty) continue;
+      options.add(_AiChatPromptOption(index: i, definition: prompt));
+    }
+    if (options.isEmpty) {
+      options.add(
+        const _AiChatPromptOption(
+          index: 0,
+          definition: AiChatSystemPrompt(
+            name: '標準',
+            prompt:
+                'あなたはメモ編集を支援するAIチャットです。ユーザーの指示に沿って、編集案・追記案・改善案を日本語で簡潔に返してください。',
+          ),
+        ),
+      );
+    }
+    return options;
+  }
+
+  _AiChatPromptOption _selectedChatPrompt(AppSettings settings) {
+    final options = _chatPromptOptions(settings);
+    for (final option in options) {
+      if (option.index == _selectedChatSystemPromptIndex) {
+        return option;
+      }
+    }
+    return options.first;
+  }
+
+  void _openAiChat() {
+    if (!_aiChatOpen && mounted) {
+      setState(() => _aiChatOpen = true);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      FocusScope.of(context).requestFocus(_aiChatFocusNode);
+      _scrollAiChatToBottom(jump: true);
+    });
+  }
+
+  void _closeAiChat() {
+    if (!mounted) return;
+    setState(() {
+      _aiChatOpen = false;
+      _isChatDragOver = false;
+      _isResizingAiChat = false;
+    });
+  }
+
+  double _resolveAiChatWidth(double availableWidth) {
+    if (!_aiChatOpen) return 0;
+    if (availableWidth < 720) return availableWidth;
+    final maxWidth = (availableWidth - _minEditorPaneWidth).clamp(
+      _minAiChatPaneWidth,
+      _maxAiChatPaneWidth,
+    );
+    return _aiChatPreferredWidth.clamp(_minAiChatPaneWidth, maxWidth);
+  }
+
+  void _resizeAiChat(double delta, double availableWidth) {
+    if (availableWidth < 720) return;
+    final next = (_aiChatPreferredWidth - delta).clamp(
+      _minAiChatPaneWidth,
+      (availableWidth - _minEditorPaneWidth).clamp(
+        _minAiChatPaneWidth,
+        _maxAiChatPaneWidth,
+      ),
+    );
+    setState(() => _aiChatPreferredWidth = next);
+  }
+
+  void _scrollAiChatToBottom({bool jump = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_aiChatScrollController.hasClients) return;
+      final position = _aiChatScrollController.position.maxScrollExtent;
+      if (jump) {
+        _aiChatScrollController.jumpTo(position);
+        return;
+      }
+      _aiChatScrollController.animateTo(
+        position,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  void _applyAiChatReplace(String text) {
+    final next = text.trim();
+    _controller.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: next.length),
+    );
+    _scheduleSave();
+    showTopRightToast(context, '本文を置き換えました。');
+    _requestEditorFocus(delay: const Duration(milliseconds: 60));
+  }
+
+  void _applyAiChatAppend(String text) {
+    final addition = text.trim();
+    if (addition.isEmpty) return;
+    final current = _controller.text;
+    final separator = current.trim().isEmpty
+        ? ''
+        : (current.endsWith('\n') ? '\n' : '\n\n');
+    final next = '$current$separator$addition';
+    _controller.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: next.length),
+    );
+    _scheduleSave();
+    showTopRightToast(context, '本文の末尾に追加しました。');
+    _requestEditorFocus(delay: const Duration(milliseconds: 60));
+  }
+
+  Future<void> _handleAiChatPaste() async {
+    final imageBytes = await _clipboardMediaService.readImagePng();
+    if (imageBytes != null && imageBytes.isNotEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _aiChatDraftImages = [
+          ..._aiChatDraftImages,
+          _AiChatDraftImage(
+            bytes: imageBytes,
+            mimeType: 'image/png',
+            label: 'クリップボード画像',
+          ),
+        ];
+      });
+      showTopRightToast(context, '画像を追加しました。');
+      return;
+    }
+
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text == null || text.isEmpty) return;
+    final value = _aiChatController.value;
+    final selection = value.selection.isValid
+        ? value.selection
+        : TextSelection.collapsed(offset: value.text.length);
+    final start = selection.start.clamp(0, value.text.length);
+    final end = selection.end.clamp(0, value.text.length);
+    final nextText = value.text.replaceRange(start, end, text);
+    _aiChatController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: start + text.length),
+    );
+  }
+
+  KeyEventResult _handleAiChatComposerKey(
+    FocusNode node,
+    KeyEvent event,
+    Note note,
+    AppSettings settings,
+  ) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+
+    final key = event.logicalKey;
+    final isPasteKey =
+        key == LogicalKeyboardKey.keyV &&
+        (HardwareKeyboard.instance.isMetaPressed ||
+            HardwareKeyboard.instance.isControlPressed);
+    if (isPasteKey) {
+      unawaited(_handleAiChatPaste());
+      return KeyEventResult.handled;
+    }
+
+    final isSubmitKey =
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter;
+    if (isSubmitKey && HardwareKeyboard.instance.isControlPressed) {
+      unawaited(_sendAiChat(note, settings));
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  String _mimeTypeFromPath(String path) {
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    return 'image/webp';
+  }
+
+  String _basename(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final index = normalized.lastIndexOf('/');
+    if (index < 0) return normalized;
+    return normalized.substring(index + 1);
+  }
+
+  Future<_AiChatDraftImage?> _loadChatDraftImageFromPath(
+    String path, {
+    Uint8List? bookmark,
+  }) async {
+    if (!_isSupportedImagePath(path)) return null;
+    final file = File(path);
+    if (!await file.exists()) return null;
+
+    var accessGranted = false;
+    if (bookmark != null && bookmark.isNotEmpty) {
+      accessGranted = await DesktopDrop.instance
+          .startAccessingSecurityScopedResource(bookmark: bookmark);
+    }
+    try {
+      final bytes = await file.readAsBytes();
+      return _AiChatDraftImage(
+        bytes: bytes,
+        mimeType: _mimeTypeFromPath(path),
+        label: _basename(path),
+      );
+    } finally {
+      if (bookmark != null && bookmark.isNotEmpty && accessGranted) {
+        await DesktopDrop.instance.stopAccessingSecurityScopedResource(
+          bookmark: bookmark,
+        );
+      }
+    }
+  }
+
+  Future<void> _handleChatDrop(List<DropItem> items) async {
+    final added = <_AiChatDraftImage>[];
+    var unsupported = 0;
+    for (final item in items) {
+      if (item is DropItemDirectory) continue;
+      final image = await _loadChatDraftImageFromPath(
+        item.path,
+        bookmark: item.extraAppleBookmark,
+      );
+      if (image == null) {
+        unsupported++;
+        continue;
+      }
+      added.add(image);
+    }
+    if (!mounted) return;
+    if (added.isNotEmpty) {
+      setState(() => _aiChatDraftImages = [..._aiChatDraftImages, ...added]);
+      showTopRightToast(context, '画像を追加しました。');
+    } else if (unsupported > 0) {
+      showTopRightToast(context, '対応形式は png / jpeg / webp です。');
+    }
+  }
+
+  Future<void> _sendAiChat(Note note, AppSettings settings) async {
+    if (_aiChatBusy) return;
+    final text = _aiChatController.text.trim();
+    final draftImages = List<_AiChatDraftImage>.from(_aiChatDraftImages);
+    if (text.isEmpty && draftImages.isEmpty) return;
+
+    final selectedPrompt = _selectedChatPrompt(settings);
+    final userMessage = _AiChatMessage(
+      role: AiChatRole.user,
+      text: text,
+      images: draftImages,
+    );
+    final token = ++_aiChatToken;
+
+    setState(() {
+      _aiChatBusy = true;
+      _aiChatController.clear();
+      _aiChatDraftImages = const [];
+      _aiChatOpen = true;
+      _aiChatMessages = [
+        ..._aiChatMessages,
+        userMessage,
+        const _AiChatMessage(
+          role: AiChatRole.assistant,
+          text: '',
+          isLoading: true,
+        ),
+      ];
+    });
+    _scrollAiChatToBottom();
+
+    try {
+      final noteImages = await _collectAiImages(note);
+      final history = [
+        ..._aiChatMessages.map((message) => message.toInput()),
+        userMessage.toInput(),
+      ];
+      final ai = ref.read(aiServiceProvider);
+      final response = await ai.chatWithNote(
+        noteTitle: _titleController.text,
+        noteContent: _controller.text,
+        noteImages: noteImages,
+        history: history,
+        systemPrompt: selectedPrompt.definition.prompt,
+        useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
+        useExternalApi: settings.aiExternalApiEnabled,
+      );
+      if (!mounted || token != _aiChatToken) return;
+      setState(() {
+        final nextMessages = List<_AiChatMessage>.from(_aiChatMessages);
+        final loadingIndex = nextMessages.lastIndexWhere(
+          (message) =>
+              message.role == AiChatRole.assistant && message.isLoading,
+        );
+        if (loadingIndex >= 0) {
+          nextMessages[loadingIndex] = _AiChatMessage(
+            role: AiChatRole.assistant,
+            text: response,
+          );
+        } else {
+          nextMessages.add(
+            _AiChatMessage(role: AiChatRole.assistant, text: response),
+          );
+        }
+        _aiChatMessages = nextMessages;
+        _aiChatBusy = false;
+      });
+      _scrollAiChatToBottom();
+    } catch (e) {
+      if (!mounted || token != _aiChatToken) return;
+      final message = e is AiException ? e.message : 'AIチャットに失敗しました。';
+      setState(() {
+        _aiChatBusy = false;
+        _aiChatMessages = _aiChatMessages
+            .where((entry) => !entry.isLoading)
+            .toList(growable: false);
+        _aiChatController.text = text;
+        _aiChatDraftImages = draftImages;
+      });
+      showTopRightToast(context, message);
+      _openAiChat();
+    }
   }
 
   bool _matchesAiShortcut(KeyEvent event, MacKeyBinding? binding) {
@@ -783,8 +1198,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       showTopRightToast(context, '画像の追加に失敗しました。');
       return;
     }
-    if (attachment != null) {
-      _insertAttachmentToken(attachment.id);
+    if (attachment != null && mounted) {
+      showTopRightToast(context, '画像を添付しました。');
     }
   }
 
@@ -804,16 +1219,16 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     }
     try {
       final repo = ref.read(attachmentRepositoryProvider);
-      final attachment =
-          await repo.addImageAttachmentFromFile(noteId: note.uuid, file: file);
-      if (attachment != null) {
-        _insertAttachmentToken(attachment.id);
-      }
+      final attachment = await repo.addImageAttachmentFromFile(
+        noteId: note.uuid,
+        file: file,
+      );
       return attachment;
     } finally {
       if (bookmark != null && bookmark.isNotEmpty && accessGranted) {
-        await DesktopDrop.instance
-            .stopAccessingSecurityScopedResource(bookmark: bookmark);
+        await DesktopDrop.instance.stopAccessingSecurityScopedResource(
+          bookmark: bookmark,
+        );
       }
     }
   }
@@ -840,26 +1255,6 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     if (added == 0 && unsupported > 0) {
       showTopRightToast(context, '対応形式は png / jpeg / webp です。');
     }
-  }
-
-  void _insertAttachmentToken(String attachmentId) {
-    final token = InlineAttachmentEditingController.buildToken(attachmentId);
-    final current = _controller.text;
-    final selection = _controller.selection;
-    final start = selection.isValid ? selection.start : current.length;
-    final end = selection.isValid ? selection.end : current.length;
-    final before = current.substring(0, start);
-    final after = current.substring(end);
-    final needsLeadingBreak = before.isNotEmpty && !before.endsWith('\n');
-    final needsTrailingBreak = after.isNotEmpty && !after.startsWith('\n');
-    final insert =
-        '${needsLeadingBreak ? '\n' : ''}$token${needsTrailingBreak ? '\n' : ''}\n';
-    final next = before + insert + after;
-    _controller.value = TextEditingValue(
-      text: next,
-      selection: TextSelection.collapsed(offset: before.length + insert.length),
-    );
-    _scheduleSave();
   }
 
   Future<List<AiImageInput>> _collectAiImages(
@@ -893,7 +1288,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     NoteAttachment attachment,
     Offset position,
   ) async {
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (overlay == null) return;
     final selected = await showMenu<String>(
       context: context,
@@ -901,9 +1297,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
         Rect.fromPoints(position, position),
         Offset.zero & overlay.size,
       ),
-      items: const [
-        PopupMenuItem(value: 'ai', child: Text('AI編集…')),
-      ],
+      items: const [PopupMenuItem(value: 'ai', child: Text('AI編集…'))],
     );
     if (!mounted || selected == null) return;
     if (selected == 'ai') {
@@ -915,44 +1309,122 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     }
   }
 
-  Widget _buildAiImageToggleRow(AppSettings settings) {
-    final muted = Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
+  Future<void> _showAttachmentDialog(Note initialNote) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return Consumer(
+              builder: (context, ref, _) {
+                final noteAsync = ref.watch(noteByIdProvider(widget.noteId));
+                final settings = ref.watch(appSettingsProvider);
+                final note = noteAsync.valueOrNull ?? initialNote;
+                final attachments = note.attachments;
+
+                return AlertDialog(
+                  title: const Text('添付画像'),
+                  content: SizedBox(
+                    width: 520,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('AIに画像を含める'),
+                          subtitle: Text(
+                            'AI送信時は最大${settings.aiImageSendLimit}枚まで',
+                          ),
+                          value: _aiImageContextEnabled,
+                          onChanged: settings.aiImageSendLimit > 0
+                              ? (value) {
+                                  setState(
+                                    () => _aiImageContextEnabled = value,
+                                  );
+                                  setDialogState(() {});
+                                }
+                              : null,
+                        ),
+                        const SizedBox(height: 8),
+                        if (attachments.isEmpty)
+                          Container(
+                            height: 180,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.outlineVariant,
+                              ),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Text('添付画像はありません'),
+                          )
+                        else
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 360),
+                            child: GridView.builder(
+                              shrinkWrap: true,
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: 3,
+                                    crossAxisSpacing: 12,
+                                    mainAxisSpacing: 12,
+                                    childAspectRatio: 1,
+                                  ),
+                              itemCount: attachments.length,
+                              itemBuilder: (context, index) {
+                                return _buildAttachmentPreviewCard(
+                                  attachments[index],
+                                );
+                              },
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: const Text('閉じる'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: () async {
+                        await _addImageAttachment(note);
+                        if (!mounted) return;
+                        setDialogState(() {});
+                      },
+                      icon: const Icon(Icons.add_photo_alternate_outlined),
+                      label: const Text('画像を追加'),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
         );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                '画像をAIに含める（上限${settings.aiImageSendLimit}枚）',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-            Switch(
-              value: _aiImageContextEnabled,
-              onChanged: (value) =>
-                  setState(() => _aiImageContextEnabled = value),
-            ),
-          ],
-        ),
-        Text('注意: 画像を送信するとAPIコストが増える可能性があります。', style: muted),
-      ],
+      },
     );
   }
 
-  Widget _buildAttachmentSection(Note note) {
-    return Row(
-      children: [
-        Text('添付画像', style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(width: 8),
-        TextButton.icon(
-          onPressed: () => _addImageAttachment(note),
-          icon: const Icon(Icons.add_photo_alternate_outlined),
-          label: const Text('追加'),
-        ),
-      ],
+  Widget _buildAttachmentPreviewCard(NoteAttachment attachment) {
+    final file = File(attachment.localPath);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(11),
+        child: file.existsSync()
+            ? Image.file(file, fit: BoxFit.cover)
+            : Container(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                alignment: Alignment.center,
+                child: const Icon(Icons.broken_image_outlined),
+              ),
+      ),
     );
   }
 
@@ -1045,10 +1517,316 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     );
   }
 
+  Widget _buildAiChatPanel(Note note, AppSettings settings) {
+    final theme = Theme.of(context);
+    final promptOptions = _chatPromptOptions(settings);
+    final selectedPrompt = _selectedChatPrompt(settings);
+    final hasNoteImages = _aiImageContextEnabled && note.attachments.isNotEmpty;
+    final modelLabel = settings.aiExternalApiEnabled
+        ? 'モデル: ${settings.aiExternalModel.trim().isEmpty ? '未設定' : settings.aiExternalModel.trim()}'
+        : 'Apple Intelligence';
+
+    return Stack(
+      children: [
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            border: Border(
+              left: BorderSide(color: theme.colorScheme.outlineVariant),
+            ),
+          ),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 6, 6),
+                child: Row(
+                  children: [
+                    Text('AIチャット', style: theme.textTheme.titleSmall),
+                    const Spacer(),
+                    Tooltip(
+                      message: 'システムプロンプト: ${selectedPrompt.definition.name}',
+                      child: PopupMenuButton<int>(
+                        icon: const Icon(Icons.tune_rounded),
+                        onSelected: (value) {
+                          setState(
+                            () => _selectedChatSystemPromptIndex = value,
+                          );
+                        },
+                        itemBuilder: (context) => [
+                          for (final option in promptOptions)
+                            PopupMenuItem(
+                              value: option.index,
+                              child: Text(option.definition.name),
+                            ),
+                        ],
+                      ),
+                    ),
+                    Tooltip(
+                      message: modelLabel,
+                      child: IconButton(
+                        onPressed: () => showTopRightToast(context, modelLabel),
+                        icon: const Icon(Icons.memory_rounded),
+                      ),
+                    ),
+                    if (hasNoteImages)
+                      Tooltip(
+                        message: '添付画像 ${note.attachments.length}枚を参照中',
+                        child: IconButton(
+                          onPressed: () => _showAttachmentDialog(note),
+                          icon: const Icon(Icons.image_outlined),
+                        ),
+                      ),
+                    if (_aiChatBusy)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    IconButton(
+                      tooltip: '閉じる',
+                      onPressed: _closeAiChat,
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: _aiChatMessages.isEmpty
+                    ? Center(
+                        child: Text(
+                          'AIに相談したい内容を入力してください',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      )
+                    : ListView.separated(
+                        controller: _aiChatScrollController,
+                        padding: const EdgeInsets.all(12),
+                        itemBuilder: (context, index) {
+                          return _buildAiChatMessageCard(
+                            _aiChatMessages[index],
+                          );
+                        },
+                        separatorBuilder: (_, _) => const SizedBox(height: 10),
+                        itemCount: _aiChatMessages.length,
+                      ),
+              ),
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                child: Focus(
+                  onKeyEvent: (node, event) =>
+                      _handleAiChatComposerKey(node, event, note, settings),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (_aiChatDraftImages.isNotEmpty) ...[
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final image in _aiChatDraftImages)
+                              Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: Image.memory(
+                                      image.bytes,
+                                      width: 68,
+                                      height: 68,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                  Positioned(
+                                    top: -8,
+                                    right: -8,
+                                    child: IconButton(
+                                      visualDensity: VisualDensity.compact,
+                                      style: IconButton.styleFrom(
+                                        backgroundColor:
+                                            theme.colorScheme.surface,
+                                      ),
+                                      onPressed: () {
+                                        setState(() {
+                                          _aiChatDraftImages =
+                                              _aiChatDraftImages
+                                                  .where(
+                                                    (draft) => draft != image,
+                                                  )
+                                                  .toList();
+                                        });
+                                      },
+                                      icon: const Icon(Icons.close, size: 16),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      TextField(
+                        controller: _aiChatController,
+                        focusNode: _aiChatFocusNode,
+                        minLines: 2,
+                        maxLines: 5,
+                        textInputAction: TextInputAction.newline,
+                        decoration:
+                            appInputDecoration(
+                              hintText: 'Ctrl+Enterで送信 / 画像はドラッグ&ドロップ・ペーストで追加',
+                            ).copyWith(
+                              contentPadding: const EdgeInsets.fromLTRB(
+                                12,
+                                12,
+                                12,
+                                14,
+                              ),
+                              suffixIconConstraints: const BoxConstraints(
+                                minWidth: 52,
+                                minHeight: 52,
+                              ),
+                              suffixIcon: Padding(
+                                padding: const EdgeInsets.only(
+                                  right: 6,
+                                  bottom: 6,
+                                ),
+                                child: Align(
+                                  widthFactor: 1,
+                                  heightFactor: 1,
+                                  alignment: Alignment.bottomCenter,
+                                  child: IconButton.filled(
+                                    tooltip: '送信',
+                                    onPressed: _aiChatBusy
+                                        ? null
+                                        : () => _sendAiChat(note, settings),
+                                    icon: const Icon(Icons.send_rounded),
+                                  ),
+                                ),
+                              ),
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_isChatDragOver)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.08),
+                  border: Border.all(
+                    color: theme.colorScheme.primary,
+                    width: 2,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildAiChatMessageCard(_AiChatMessage message) {
+    final theme = Theme.of(context);
+    final isUser = message.role == AiChatRole.user;
+    final alignment = isUser ? Alignment.centerRight : Alignment.centerLeft;
+    final backgroundColor = isUser
+        ? theme.colorScheme.primaryContainer
+        : theme.colorScheme.surfaceContainerHighest;
+
+    return Align(
+      alignment: alignment,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isUser ? 'あなた' : 'AI',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                if (message.images.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final image in message.images)
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image.memory(
+                            image.bytes,
+                            width: 72,
+                            height: 72,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+                if (message.isLoading) ...[
+                  const SizedBox(height: 8),
+                  AnimatedDotsText(
+                    text: 'AIが応答を作成中',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ] else if (message.text.trim().isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  SelectableText(message.text),
+                ],
+                if (!isUser &&
+                    !message.isLoading &&
+                    message.text.trim().isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton.outlined(
+                        tooltip: '本文を置き換え',
+                        onPressed: () => _applyAiChatReplace(message.text),
+                        icon: const Icon(Icons.edit_note),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.outlined(
+                        tooltip: '末尾に追加',
+                        onPressed: () => _applyAiChatAppend(message.text),
+                        icon: const Icon(Icons.post_add),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final noteAsync = ref.watch(noteByIdProvider(widget.noteId));
     final settings = ref.watch(appSettingsProvider);
+    final canGoBack = Navigator.of(context).canPop();
 
     return noteAsync.when(
       data: (note) {
@@ -1068,7 +1846,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
         }
 
         final title = note.title.trim();
-        final display = title.isEmpty ? '（無題）' : title;
+        final display = title.isEmpty ? 'タイトルを入力' : title;
         if (!_editingTitle &&
             (_lastTitleLoaded != note.title ||
                 _titleController.text == _lastTitleLoaded)) {
@@ -1118,47 +1896,128 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                   children: [
                     Row(
                       children: [
+                        if (canGoBack) ...[
+                          IconButton(
+                            tooltip: '戻る',
+                            visualDensity: VisualDensity.compact,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 36,
+                              height: 36,
+                            ),
+                            padding: EdgeInsets.zero,
+                            onPressed: () => Navigator.of(context).maybePop(),
+                            icon: const Icon(
+                              Icons.arrow_back_rounded,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
                         Expanded(
-                          child: _editingTitle
-                              ? TextField(
-                                  controller: _titleController,
-                                  focusNode: _titleFocusNode,
-                                  decoration: appInputDecoration(
-                                    hintText: 'タイトルを入力',
-                                    isDense: true,
-                                  ),
-                                  onChanged: (_) => _scheduleTitleSave(note),
-                                  textInputAction: TextInputAction.done,
-                                  onEditingComplete: () => _commitTitle(note),
-                                  onSubmitted: (_) => _commitTitle(note),
-                                )
-                              : GestureDetector(
-                                  onTap: () {
-                                    setState(() => _editingTitle = true);
-                                    WidgetsBinding.instance
-                                        .addPostFrameCallback((_) {
-                                          if (!mounted) return;
-                                          _titleController
-                                              .selection = TextSelection(
-                                            baseOffset: 0,
-                                            extentOffset:
-                                                _titleController.text.length,
-                                          );
-                                          FocusScope.of(
-                                            context,
-                                          ).requestFocus(_titleFocusNode);
-                                        });
-                                  },
-                                  child: Text(
-                                    display,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.titleMedium,
-                                  ),
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: _editingTitle
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(
+                                        context,
+                                      ).colorScheme.outlineVariant,
+                              ),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: _editingTitle
+                                      ? TextField(
+                                          controller: _titleController,
+                                          focusNode: _titleFocusNode,
+                                          decoration: const InputDecoration(
+                                            hintText: 'タイトルを入力',
+                                            border: InputBorder.none,
+                                            isDense: true,
+                                            contentPadding:
+                                                EdgeInsets.symmetric(
+                                                  horizontal: 12,
+                                                  vertical: 12,
+                                                ),
+                                          ),
+                                          onChanged: (_) =>
+                                              _scheduleTitleSave(note),
+                                          textInputAction: TextInputAction.done,
+                                          onEditingComplete: () =>
+                                              _commitTitle(note),
+                                          onSubmitted: (_) =>
+                                              _commitTitle(note),
+                                        )
+                                      : InkWell(
+                                          borderRadius: BorderRadius.circular(
+                                            11,
+                                          ),
+                                          onTap: () {
+                                            setState(
+                                              () => _editingTitle = true,
+                                            );
+                                            WidgetsBinding.instance
+                                                .addPostFrameCallback((_) {
+                                                  if (!mounted) return;
+                                                  _titleController.selection =
+                                                      TextSelection(
+                                                        baseOffset: 0,
+                                                        extentOffset:
+                                                            _titleController
+                                                                .text
+                                                                .length,
+                                                      );
+                                                  FocusScope.of(
+                                                    context,
+                                                  ).requestFocus(
+                                                    _titleFocusNode,
+                                                  );
+                                                });
+                                          },
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 12,
+                                            ),
+                                            child: Text(
+                                              display,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleMedium
+                                                  ?.copyWith(
+                                                    color: title.isEmpty
+                                                        ? Theme.of(context)
+                                                              .colorScheme
+                                                              .onSurfaceVariant
+                                                        : null,
+                                                  ),
+                                            ),
+                                          ),
+                                        ),
                                 ),
+                                Container(
+                                  width: 1,
+                                  height: 28,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.outlineVariant,
+                                ),
+                                AiTitleRulesHoverMenu(
+                                  rules: settings.aiTitleRules,
+                                  enabled: settings.aiEnabled,
+                                  busy: _titleAiBusy,
+                                  onSelect: (rule, _) =>
+                                      _generateTitleWithRule(note, rule),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
+                        const SizedBox(width: 4),
                         ReorderableIconToolbar(
                           actions: [
                             ToolbarAction(
@@ -1186,12 +2045,53 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                               ),
                             ),
                             ToolbarAction(
-                              id: 'add_image',
-                              builder: (context) => IconButton(
-                                tooltip: '画像を追加',
-                                onPressed: () => _addImageAttachment(note),
-                                icon: const Icon(
-                                  Icons.add_photo_alternate_outlined,
+                              id: 'image_tools',
+                              builder: (context) => Tooltip(
+                                message: note.attachments.isEmpty
+                                    ? '添付画像'
+                                    : '添付画像（${note.attachments.length}枚）',
+                                child: IconButton(
+                                  onPressed: () => _showAttachmentDialog(note),
+                                  icon: Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      Icon(
+                                        _aiImageContextEnabled
+                                            ? Icons.add_photo_alternate
+                                            : Icons
+                                                  .add_photo_alternate_outlined,
+                                      ),
+                                      if (note.attachments.isNotEmpty)
+                                        Positioned(
+                                          right: -6,
+                                          top: -4,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 4,
+                                              vertical: 1,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.primary,
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                            ),
+                                            child: Text(
+                                              '${note.attachments.length}',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .labelSmall
+                                                  ?.copyWith(
+                                                    color: Theme.of(
+                                                      context,
+                                                    ).colorScheme.onPrimary,
+                                                  ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
@@ -1222,14 +2122,24 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                               id: 'ai_edit',
                               builder: (context) => Tooltip(
                                 message: settings.aiEnabled
-                                    ? 'AI編集'
-                                    : 'AI編集は設定で有効化してください',
+                                    ? 'AIチャット'
+                                    : 'AIチャットは設定で有効化してください',
                                 child: IconButton(
                                   onPressed: settings.aiEnabled
-                                      ? () => _openAiEditDialog(note: note)
+                                      ? _openAiChat
                                       : null,
-                                  icon: const Icon(Icons.auto_fix_high),
+                                  icon: const Icon(Icons.chat_bubble_outline),
                                 ),
+                              ),
+                            ),
+                            ToolbarAction(
+                              id: 'settings',
+                              builder: (context) => IconButton(
+                                tooltip: '設定',
+                                onPressed: () => Navigator.of(
+                                  context,
+                                ).pushNamed('/settings'),
+                                icon: const Icon(Icons.settings_outlined),
                               ),
                             ),
                             ToolbarAction(
@@ -1244,10 +2154,6 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    _buildAiImageToggleRow(settings),
-                    const SizedBox(height: 4),
-                    _buildAttachmentSection(note),
                     if (hasTagBar) ...[
                       const SizedBox(height: 8),
                       Wrap(
@@ -1283,146 +2189,285 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
             ),
             const Divider(height: 1),
             Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Stack(
-                  children: [
-                    Focus(
-                      onKeyEvent: (node, event) {
-                        if (_handleEnterKey(event)) {
-                          return KeyEventResult.handled;
-                        }
-                        if (settings.aiEnabled &&
-                            _matchesAiShortcut(
-                              event,
-                              settings.aiEditKeyBinding,
-                            )) {
-                          _openAiEditDialog(note: note);
-                          return KeyEventResult.handled;
-                        }
-                        return KeyEventResult.ignored;
-                      },
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          _editorWidth = constraints.maxWidth -
-                              _editorContentPadding.horizontal;
-                          if (_editorWidth < 0) _editorWidth = 0;
-                          return TextField(
-                            controller: _controller,
-                            focusNode: _focusNode,
-                            maxLines: null,
-                            expands: true,
-                            textAlign: TextAlign.left,
-                            textAlignVertical: TextAlignVertical.top,
-                            decoration: appInputDecoration(
-                              hintText: 'メモを書く…',
-                            ).copyWith(
-                              contentPadding: _editorContentPadding,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isResizableLayout =
+                      _aiChatOpen && constraints.maxWidth >= 720;
+                  final chatWidth = _resolveAiChatWidth(constraints.maxWidth);
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: DropTarget(
+                          onDragEntered: (_) =>
+                              setState(() => _isDragOver = true),
+                          onDragExited: (_) =>
+                              setState(() => _isDragOver = false),
+                          onDragDone: (details) async {
+                            setState(() => _isDragOver = false);
+                            await _handleDrop(note, details.files);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Stack(
+                              children: [
+                                Focus(
+                                  onKeyEvent: (node, event) {
+                                    if (_handleEnterKey(event)) {
+                                      return KeyEventResult.handled;
+                                    }
+                                    if (settings.aiEnabled &&
+                                        _matchesAiShortcut(
+                                          event,
+                                          settings.aiEditKeyBinding,
+                                        )) {
+                                      _openAiChat();
+                                      return KeyEventResult.handled;
+                                    }
+                                    return KeyEventResult.ignored;
+                                  },
+                                  child: LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      _editorWidth =
+                                          constraints.maxWidth -
+                                          _editorContentPadding.horizontal;
+                                      if (_editorWidth < 0) _editorWidth = 0;
+                                      return TextField(
+                                        controller: _controller,
+                                        focusNode: _focusNode,
+                                        maxLines: null,
+                                        expands: true,
+                                        textAlign: TextAlign.left,
+                                        textAlignVertical:
+                                            TextAlignVertical.top,
+                                        decoration:
+                                            appInputDecoration(
+                                              hintText: 'メモを書く…',
+                                            ).copyWith(
+                                              contentPadding:
+                                                  _editorContentPadding,
+                                            ),
+                                        onChanged: (_) => _scheduleSave(),
+                                        contextMenuBuilder:
+                                            (context, editableTextState) {
+                                              return _buildAiContextMenu(
+                                                context,
+                                                editableTextState,
+                                                settings,
+                                                note,
+                                              );
+                                            },
+                                      );
+                                    },
+                                  ),
+                                ),
+                                if (_aiBusy)
+                                  Positioned(
+                                    top: 8,
+                                    right: 8,
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .surfaceContainerHighest
+                                            .withValues(alpha: 0.9),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        child: AnimatedDotsText(
+                                          text: '[AIが編集中',
+                                          suffix: ']',
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                if (settings.charCountEnabled)
+                                  Positioned(
+                                    right: 8,
+                                    bottom: 6,
+                                    child:
+                                        ValueListenableBuilder<
+                                          TextEditingValue
+                                        >(
+                                          valueListenable: _controller,
+                                          builder: (context, value, _) {
+                                            final count = _countText(
+                                              value.text,
+                                              settings.charCountExcludeSymbols,
+                                            );
+                                            final suffix =
+                                                settings.charCountExcludeSymbols
+                                                ? '（記号含まず）'
+                                                : '';
+                                            return Text(
+                                              '$count$suffix',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                            );
+                                          },
+                                        ),
+                                  ),
+                                if (_isDragOver)
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary
+                                              .withValues(alpha: 0.08),
+                                          border: Border.all(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
+                                            width: 2,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
-                            onChanged: (_) => _scheduleSave(),
-                            contextMenuBuilder: (context, editableTextState) {
-                              return _buildAiContextMenu(
-                                context,
-                                editableTextState,
-                                settings,
-                                note,
+                          ),
+                        ),
+                      ),
+                      if (isResizableLayout)
+                        MouseRegion(
+                          cursor: SystemMouseCursors.resizeColumn,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onHorizontalDragStart: (_) {
+                              setState(() => _isResizingAiChat = true);
+                            },
+                            onHorizontalDragUpdate: (details) {
+                              _resizeAiChat(
+                                details.delta.dx,
+                                constraints.maxWidth,
                               );
                             },
-                          );
-                        },
-                      ),
-                    ),
-                    if (_aiBusy)
-                      Positioned(
-                        top: 8,
-                        right: 8,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest
-                                .withValues(alpha: 0.9),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            child: AnimatedDotsText(
-                              text: '[AIが編集中',
-                              suffix: ']',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ),
-                        ),
-                      ),
-                    if (settings.charCountEnabled)
-                      Positioned(
-                        right: 8,
-                        bottom: 6,
-                        child: ValueListenableBuilder<TextEditingValue>(
-                          valueListenable: _controller,
-                          builder: (context, value, _) {
-                            final count = _countText(
-                              value.text,
-                              settings.charCountExcludeSymbols,
-                            );
-                            final suffix = settings.charCountExcludeSymbols
-                                ? '（記号含まず）'
-                                : '';
-                            return Text(
-                              '$count$suffix',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
+                            onHorizontalDragEnd: (_) {
+                              if (!mounted) return;
+                              setState(() => _isResizingAiChat = false);
+                            },
+                            onHorizontalDragCancel: () {
+                              if (!mounted) return;
+                              setState(() => _isResizingAiChat = false);
+                            },
+                            child: SizedBox(
+                              width: 6,
+                              child: Center(
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 140),
+                                  width: 1.5,
+                                  height: 72,
+                                  decoration: BoxDecoration(
+                                    color:
+                                        (_isResizingAiChat
+                                                ? Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary
+                                                : Theme.of(
+                                                    context,
+                                                  ).colorScheme.outlineVariant)
+                                            .withValues(
+                                              alpha: _isResizingAiChat
+                                                  ? 0.9
+                                                  : 0.75,
+                                            ),
+                                    borderRadius: BorderRadius.circular(999),
                                   ),
-                            );
-                          },
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        width: chatWidth,
+                        child: _aiChatOpen
+                            ? DropTarget(
+                                onDragEntered: (_) =>
+                                    setState(() => _isChatDragOver = true),
+                                onDragExited: (_) =>
+                                    setState(() => _isChatDragOver = false),
+                                onDragDone: (details) async {
+                                  setState(() => _isChatDragOver = false);
+                                  await _handleChatDrop(details.files);
+                                },
+                                child: _buildAiChatPanel(note, settings),
+                              )
+                            : null,
                       ),
-                  ],
-                ),
+                    ],
+                  );
+                },
               ),
             ),
           ],
         );
 
-        return DropTarget(
-          onDragEntered: (_) => setState(() => _isDragOver = true),
-          onDragExited: (_) => setState(() => _isDragOver = false),
-          onDragDone: (details) async {
-            setState(() => _isDragOver = false);
-            await _handleDrop(note, details.files);
-          },
-          child: Stack(
-            children: [
-              body,
-              if (_isDragOver)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .primary
-                            .withValues(alpha: 0.08),
-                        border: Border.all(
-                          color: Theme.of(context).colorScheme.primary,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        );
+        return body;
       },
       error: (e, _) => Center(child: Text('エラー: $e')),
       loading: () => const Center(child: CircularProgressIndicator()),
+    );
+  }
+}
+
+class _AiChatPromptOption {
+  const _AiChatPromptOption({required this.index, required this.definition});
+
+  final int index;
+  final AiChatSystemPrompt definition;
+}
+
+class _AiChatDraftImage {
+  const _AiChatDraftImage({
+    required this.bytes,
+    required this.mimeType,
+    required this.label,
+  });
+
+  final Uint8List bytes;
+  final String mimeType;
+  final String label;
+
+  AiImageInput toInput() {
+    return AiImageInput(bytes: bytes, mimeType: mimeType);
+  }
+}
+
+class _AiChatMessage {
+  const _AiChatMessage({
+    required this.role,
+    required this.text,
+    this.images = const [],
+    this.isLoading = false,
+  });
+
+  final AiChatRole role;
+  final String text;
+  final List<_AiChatDraftImage> images;
+  final bool isLoading;
+
+  AiChatMessageInput toInput() {
+    return AiChatMessageInput(
+      role: role,
+      text: text,
+      images: images.map((image) => image.toInput()).toList(growable: false),
     );
   }
 }

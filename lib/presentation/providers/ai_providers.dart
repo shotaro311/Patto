@@ -4,6 +4,7 @@ import '../../core/providers.dart';
 import '../../services/ai_key_repository.dart';
 import '../../services/ai_service.dart';
 import '../../services/apple_intelligence_client.dart';
+import 'app_settings_controller.dart';
 
 final aiKeyRepositoryProvider = Provider<AiKeyRepository>((ref) {
   final storage = ref.watch(secureStorageProvider);
@@ -18,5 +19,6 @@ final appleIntelligenceClientProvider =
 final aiServiceProvider = Provider<AiService>((ref) {
   final repo = ref.watch(aiKeyRepositoryProvider);
   final apple = ref.watch(appleIntelligenceClientProvider);
-  return AiService(repo, apple);
+  final settings = ref.watch(appSettingsProvider);
+  return AiService(repo, apple, settings);
 });

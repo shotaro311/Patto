@@ -28,9 +28,7 @@ import 'external_paste_guard.dart';
 import 'note_editor_pane.dart';
 
 class QuickMemoScreen extends ConsumerStatefulWidget {
-  const QuickMemoScreen({super.key, this.showDraftActionSheetOnOpen = false});
-
-  final bool showDraftActionSheetOnOpen;
+  const QuickMemoScreen({super.key});
 
   @override
   ConsumerState<QuickMemoScreen> createState() => _QuickMemoScreenState();
@@ -46,7 +44,6 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   String _lastLoaded = '';
   ProviderSubscription<int>? _quickLaunchSub;
   ProviderSubscription<int>? _externalPasteSub;
-  bool _didShowDraftActionSheet = false;
   bool _inlineBusy = false;
   int _inlineToken = 0;
   int? _runningPresetIndex;
@@ -153,7 +150,9 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     try {
       final settings = ref.read(appSettingsProvider);
       final ai = ref.read(aiServiceProvider);
-      final images = note == null ? const <AiImageInput>[] : await _collectAiImages(note);
+      final images = note == null
+          ? const <AiImageInput>[]
+          : await _collectAiImages(note);
       final result = await ai.editTextWithImages(
         instruction: preset.prompt,
         originalText: target.originalText,
@@ -371,16 +370,19 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     }
     try {
       final repo = ref.read(attachmentRepositoryProvider);
-      final attachment =
-          await repo.addImageAttachmentFromFile(noteId: note.uuid, file: file);
+      final attachment = await repo.addImageAttachmentFromFile(
+        noteId: note.uuid,
+        file: file,
+      );
       if (attachment != null) {
         _insertAttachmentToken(attachment.id);
       }
       return attachment;
     } finally {
       if (bookmark != null && bookmark.isNotEmpty && accessGranted) {
-        await DesktopDrop.instance
-            .stopAccessingSecurityScopedResource(bookmark: bookmark);
+        await DesktopDrop.instance.stopAccessingSecurityScopedResource(
+          bookmark: bookmark,
+        );
       }
     }
   }
@@ -405,9 +407,9 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     }
     if (!mounted) return;
     if (added == 0 && unsupported > 0) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('対応形式は png / jpeg / webp です。')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('対応形式は png / jpeg / webp です。')),
+      );
     }
   }
 
@@ -464,7 +466,8 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     NoteAttachment attachment,
     Offset position,
   ) async {
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (overlay == null) return;
     final selected = await showMenu<String>(
       context: context,
@@ -472,55 +475,12 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
         Rect.fromPoints(position, position),
         Offset.zero & overlay.size,
       ),
-      items: const [
-        PopupMenuItem(value: 'ai', child: Text('AI編集…')),
-      ],
+      items: const [PopupMenuItem(value: 'ai', child: Text('AI編集…'))],
     );
     if (!mounted || selected == null) return;
     if (selected == 'ai') {
       _openAiEditDialog(note: note, imageOverride: attachment);
     }
-  }
-
-  Widget _buildAiImageToggleRow(AppSettings settings) {
-    final muted = Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                '画像をAIに含める（上限${settings.aiImageSendLimit}枚）',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-            Switch(
-              value: _aiImageContextEnabled,
-              onChanged: (value) =>
-                  setState(() => _aiImageContextEnabled = value),
-            ),
-          ],
-        ),
-        Text('注意: 画像を送信するとAPIコストが増える可能性があります。', style: muted),
-      ],
-    );
-  }
-
-  Widget _buildAttachmentSection(Note? note) {
-    return Row(
-      children: [
-        Text('添付画像', style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(width: 8),
-        TextButton.icon(
-          onPressed: _addImageAttachment,
-          icon: const Icon(Icons.add_photo_alternate_outlined),
-          label: const Text('追加'),
-        ),
-      ],
-    );
   }
 
   Widget _buildInlineAttachment(
@@ -662,6 +622,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
     messenger.showSnackBar(
       SnackBar(
         content: const Text('保存しました'),
+        persist: false,
         duration: const Duration(seconds: 2),
         action: SnackBarAction(
           label: '開く',
@@ -917,56 +878,27 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
         .updateContent(_controller.text);
   }
 
-  Future<void> _showDraftActionSheet() async {
-    final action = await showModalBottomSheet<_DraftAction>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.save),
-                title: const Text('保存'),
-                subtitle: const Text('保存済みメモに追加して、クイックメモを空にする'),
-                onTap: () => Navigator.of(context).pop(_DraftAction.save),
-              ),
-              ListTile(
-                leading: const Icon(Icons.edit),
-                title: const Text('編集'),
-                subtitle: const Text('このまま編集を続ける'),
-                onTap: () => Navigator.of(context).pop(_DraftAction.edit),
-              ),
-              ListTile(
-                leading: const Icon(Icons.delete_outline),
-                title: const Text('破棄'),
-                subtitle: const Text('この下書きを削除して、クイックメモを空にする'),
-                onTap: () => Navigator.of(context).pop(_DraftAction.discard),
-              ),
-            ],
-          ),
-        );
-      },
-    );
+  void _toggleAiImageContext() {
+    setState(() => _aiImageContextEnabled = !_aiImageContextEnabled);
+  }
 
+  Future<void> _discardDraft() async {
+    await ref.read(quickMemoControllerProvider.notifier).discardCurrentDraft();
     if (!mounted) return;
-    if (action == null) {
-      FocusScope.of(context).requestFocus(_focusNode);
-      return;
-    }
+    FocusScope.of(context).requestFocus(_focusNode);
+  }
 
+  Future<void> _handleToolsAction(_QuickMemoToolsAction action) async {
     switch (action) {
-      case _DraftAction.save:
-        await _save();
-      case _DraftAction.edit:
-        FocusScope.of(context).requestFocus(_focusNode);
-      case _DraftAction.discard:
-        await ref
-            .read(quickMemoControllerProvider.notifier)
-            .discardCurrentDraft();
-        if (!mounted) return;
-        FocusScope.of(context).requestFocus(_focusNode);
+      case _QuickMemoToolsAction.addImage:
+        await _addImageAttachment();
+        return;
+      case _QuickMemoToolsAction.toggleAiImageContext:
+        _toggleAiImageContext();
+        return;
+      case _QuickMemoToolsAction.discardDraft:
+        await _discardDraft();
+        return;
     }
   }
 
@@ -996,15 +928,7 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
 
     final title = deriveTitleFromContent(_controller.text);
     final display = title.isEmpty ? 'クイックメモ' : title;
-
-    if (widget.showDraftActionSheetOnOpen &&
-        !_didShowDraftActionSheet &&
-        state.content.trim().isNotEmpty) {
-      _didShowDraftActionSheet = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _showDraftActionSheet();
-      });
-    }
+    final hasDraftContent = state.content.trim().isNotEmpty;
 
     final hasTagBar =
         (draftNote?.manualTags.isNotEmpty ?? false) ||
@@ -1044,13 +968,40 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                     }
                     _requireDraftNote().then((note) {
                       if (note == null) return;
-                      _runInlineAiEdit(
-                        preset,
-                        index,
-                        note: note,
-                      );
+                      _runInlineAiEdit(preset, index, note: note);
                     });
                   },
+                ),
+              ),
+              ToolbarAction(
+                id: 'quick_memo_tools',
+                builder: (context) => PopupMenuButton<_QuickMemoToolsAction>(
+                  tooltip: _aiImageContextEnabled
+                      ? '画像と下書きの操作（AI画像: ON）'
+                      : '画像と下書きの操作',
+                  onSelected: _handleToolsAction,
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: _QuickMemoToolsAction.addImage,
+                      child: Text('画像を追加'),
+                    ),
+                    CheckedPopupMenuItem(
+                      value: _QuickMemoToolsAction.toggleAiImageContext,
+                      checked: _aiImageContextEnabled,
+                      enabled: settings.aiImageSendLimit > 0,
+                      child: Text('AIに画像を含める（上限${settings.aiImageSendLimit}枚）'),
+                    ),
+                    PopupMenuItem(
+                      value: _QuickMemoToolsAction.discardDraft,
+                      enabled: hasDraftContent,
+                      child: const Text('下書きを破棄'),
+                    ),
+                  ],
+                  icon: Icon(
+                    _aiImageContextEnabled
+                        ? Icons.add_photo_alternate
+                        : Icons.add_photo_alternate_outlined,
+                  ),
                 ),
               ),
               ToolbarAction(
@@ -1117,10 +1068,6 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
               padding: const EdgeInsets.all(12),
               child: Column(
                 children: [
-                  _buildAiImageToggleRow(settings),
-                  const SizedBox(height: 4),
-                  _buildAttachmentSection(draftNote),
-                  const SizedBox(height: 8),
                   if (hasTagBar)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
@@ -1128,12 +1075,14 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                         spacing: 6,
                         runSpacing: 6,
                         children: [
-                          if (_aiTagSuggesting) const Chip(label: Text('AI提案中…')),
+                          if (_aiTagSuggesting)
+                            const Chip(label: Text('AI提案中…')),
                           if (draftNote != null)
                             for (final tag in draftNote.manualTags)
                               InputChip(
                                 label: Text('#${_normalizeTag(tag)}'),
-                                onDeleted: () => _removeManualTag(draftNote, tag),
+                                onDeleted: () =>
+                                    _removeManualTag(draftNote, tag),
                               ),
                           if (draftNote != null)
                             for (final tag in draftNote.autoTags)
@@ -1165,7 +1114,8 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                           },
                           child: LayoutBuilder(
                             builder: (context, constraints) {
-                              _editorWidth = constraints.maxWidth -
+                              _editorWidth =
+                                  constraints.maxWidth -
                                   _editorContentPadding.horizontal;
                               if (_editorWidth < 0) _editorWidth = 0;
                               return TextField(
@@ -1175,21 +1125,22 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                                 expands: true,
                                 textAlign: TextAlign.left,
                                 textAlignVertical: TextAlignVertical.top,
-                                decoration: appInputDecoration(
-                                  hintText: 'クイックメモを書く…',
-                                ).copyWith(
-                                  contentPadding: _editorContentPadding,
-                                ),
+                                decoration:
+                                    appInputDecoration(
+                                      hintText: 'クイックメモを書く…',
+                                    ).copyWith(
+                                      contentPadding: _editorContentPadding,
+                                    ),
                                 onChanged: (value) => ref
                                     .read(quickMemoControllerProvider.notifier)
                                     .updateContent(value),
                                 contextMenuBuilder:
                                     (context, editableTextState) {
-                                  return _buildTextContextMenu(
-                                    context,
-                                    editableTextState,
-                                  );
-                                },
+                                      return _buildTextContextMenu(
+                                        context,
+                                        editableTextState,
+                                      );
+                                    },
                               );
                             },
                           ),
@@ -1231,10 +1182,9 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
                 child: IgnorePointer(
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .primary
-                          .withValues(alpha: 0.08),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.primary.withValues(alpha: 0.08),
                       border: Border.all(
                         color: Theme.of(context).colorScheme.primary,
                         width: 2,
@@ -1250,4 +1200,4 @@ class _QuickMemoScreenState extends ConsumerState<QuickMemoScreen> {
   }
 }
 
-enum _DraftAction { save, edit, discard }
+enum _QuickMemoToolsAction { addImage, toggleAiImageContext, discardDraft }
