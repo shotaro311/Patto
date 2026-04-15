@@ -1,4 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/gestures.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -10,7 +13,6 @@ import '../theme/patto_theme.dart';
 import '../widgets/app_input_decoration.dart';
 import '../widgets/patto_surface.dart';
 import 'note_editor_pane.dart';
-import 'note_editor_screen.dart';
 
 class NotesHomeScreen extends ConsumerStatefulWidget {
   const NotesHomeScreen({super.key});
@@ -20,8 +22,10 @@ class NotesHomeScreen extends ConsumerStatefulWidget {
 }
 
 class _NotesHomeScreenState extends ConsumerState<NotesHomeScreen> {
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _isSidebarVisible = true;
   static const double _sidebarWidth = 340;
+  static const double _minDesktopSidebarWidth = 220;
   static const double _sidebarPeekWidth = 14;
   static const double _sidebarHoverWidth = 28;
 
@@ -39,24 +43,13 @@ class _NotesHomeScreenState extends ConsumerState<NotesHomeScreen> {
     });
   }
 
-  Future<void> _createNewNote(
-    BuildContext context, {
-    required bool isWide,
-  }) async {
+  Future<void> _createNewNote(BuildContext context) async {
     try {
       final note = await ref.read(noteRepositoryProvider).createNote();
       await ref
           .read(appSettingsProvider.notifier)
           .setLastOpenedNoteId(note.uuid);
-      if (isWide) {
-        ref.read(selectedNoteIdProvider.notifier).state = note.uuid;
-      } else if (context.mounted) {
-        await Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => NoteEditorScreen(noteId: note.uuid),
-          ),
-        );
-      }
+      ref.read(selectedNoteIdProvider.notifier).state = note.uuid;
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(
@@ -70,15 +63,7 @@ class _NotesHomeScreenState extends ConsumerState<NotesHomeScreen> {
     required bool showingEditor,
   }) {
     return AppBar(
-      leading: showingEditor
-          ? IconButton(
-              tooltip: 'メモ一覧に戻る',
-              onPressed: () {
-                ref.read(selectedNoteIdProvider.notifier).state = null;
-              },
-              icon: const Icon(Icons.arrow_back_rounded),
-            )
-          : null,
+      automaticallyImplyLeading: true,
       title: Text(
         'Patto!',
         style: Theme.of(
@@ -86,12 +71,71 @@ class _NotesHomeScreenState extends ConsumerState<NotesHomeScreen> {
         ).textTheme.headlineSmall?.copyWith(fontSize: 30),
       ),
       actions: [
+        if (showingEditor)
+          IconButton(
+            tooltip: 'メモ一覧に戻る',
+            onPressed: () {
+              ref.read(selectedNoteIdProvider.notifier).state = null;
+            },
+            icon: const Icon(Icons.view_list_rounded),
+          ),
         IconButton(
           tooltip: '設定',
           onPressed: () => Navigator.of(context).pushNamed('/settings'),
           icon: const Icon(Icons.settings_outlined),
         ),
       ],
+    );
+  }
+
+  Widget _buildMobileDrawer(BuildContext context, Widget list) {
+    return Drawer(
+      child: SafeArea(
+        bottom: false,
+        child: ColoredBox(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                child: PattoSurface(
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+                  color: context.pattoTokens.panelStrongColor,
+                  floating: true,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Patto!',
+                          style: Theme.of(context).textTheme.headlineSmall,
+                        ),
+                      ),
+                      IconButton.filledTonal(
+                        tooltip: '設定',
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          Navigator.of(context).pushNamed('/settings');
+                        },
+                        icon: const Icon(Icons.settings_outlined),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: PattoSurface(
+                    padding: EdgeInsets.zero,
+                    floating: true,
+                    child: list,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -143,7 +187,7 @@ class _NotesHomeScreenState extends ConsumerState<NotesHomeScreen> {
     );
   }
 
-  Widget _buildEmptySelection(BuildContext context, {required bool isWide}) {
+  Widget _buildEmptySelection(BuildContext context) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -157,7 +201,7 @@ class _NotesHomeScreenState extends ConsumerState<NotesHomeScreen> {
               children: [
                 IconButton.filled(
                   tooltip: '新規メモを作成',
-                  onPressed: () => _createNewNote(context, isWide: isWide),
+                  onPressed: () => _createNewNote(context),
                   icon: const Icon(Icons.add_rounded, size: 28),
                   style: IconButton.styleFrom(
                     backgroundColor: Theme.of(context).colorScheme.primary,
@@ -169,7 +213,7 @@ class _NotesHomeScreenState extends ConsumerState<NotesHomeScreen> {
                 Text('メモを作成する', style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),
                 Text(
-                  '左端にマウスをホバーするとメモ一覧が開きます。\n上の＋ボタンから新しいメモを作成できます。',
+                  '左の一覧からメモを選ぶか、＋ボタンから新しいメモを作成できます。',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
@@ -183,113 +227,146 @@ class _NotesHomeScreenState extends ConsumerState<NotesHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isWide = MediaQuery.sizeOf(context).width >= 900;
+    final isDesktopPlatform =
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux;
+    final useDrawerLayout =
+        !isDesktopPlatform && MediaQuery.sizeOf(context).width < 900;
     final notesAsync = ref.watch(notesProvider);
     final selectedId = ref.watch(selectedNoteIdProvider);
+    final theme = Theme.of(context);
 
-    return Scaffold(
-      appBar: isWide
-          ? null
-          : _buildMobileAppBar(context, showingEditor: selectedId != null),
-      body: ColoredBox(
-        color: Theme.of(context).scaffoldBackgroundColor,
-        child: SafeArea(
-          top: false,
-          bottom: false,
-          child: notesAsync.when(
-            data: (notes) {
-              final list = _NotesList(
-                notes: notes,
-                selectedId: selectedId,
-                bottomPadding: 18,
-                onSelect: (noteId) async {
-                  await ref
-                      .read(appSettingsProvider.notifier)
-                      .setLastOpenedNoteId(noteId);
-                  if (isWide) {
-                    ref.read(selectedNoteIdProvider.notifier).state = noteId;
-                  } else if (context.mounted) {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => NoteEditorScreen(noteId: noteId),
+    return notesAsync.when(
+      data: (notes) {
+        final list = _NotesList(
+          notes: notes,
+          selectedId: selectedId,
+          bottomPadding: 18,
+          onCreateNote: () => _createNewNote(context),
+          onSelect: (noteId) async {
+            await ref
+                .read(appSettingsProvider.notifier)
+                .setLastOpenedNoteId(noteId);
+            ref.read(selectedNoteIdProvider.notifier).state = noteId;
+            if (useDrawerLayout &&
+                (_scaffoldKey.currentState?.isDrawerOpen ?? false)) {
+              _scaffoldKey.currentState?.closeDrawer();
+            }
+          },
+        );
+
+        final content = useDrawerLayout
+            ? (selectedId == null
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                      child: list,
+                    )
+                  : NoteEditorPane(noteId: selectedId))
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  final wideRatioWidth = constraints.maxWidth * 0.42;
+                  final minSidebarWidth = math.min(
+                    _minDesktopSidebarWidth,
+                    constraints.maxWidth * 0.45,
+                  );
+                  final resolvedSidebarWidth = math.max(
+                    minSidebarWidth,
+                    math.min(_sidebarWidth, wideRatioWidth),
+                  );
+                  final sidebarFrameWidth = resolvedSidebarWidth + 28;
+                  final collapsedWidth = math.min(
+                    _sidebarPeekWidth,
+                    sidebarFrameWidth,
+                  );
+                  final hoverWidth = math.min(
+                    _sidebarHoverWidth,
+                    sidebarFrameWidth,
+                  );
+
+                  return Stack(
+                    children: [
+                      Row(
+                        children: [
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeOutCubic,
+                            width: _isSidebarVisible
+                                ? sidebarFrameWidth
+                                : collapsedWidth,
+                            child: ClipRect(
+                              child: Stack(
+                                children: [
+                                  AnimatedPositioned(
+                                    duration: const Duration(milliseconds: 220),
+                                    curve: Curves.easeOutCubic,
+                                    left: _isSidebarVisible
+                                        ? 0
+                                        : -(sidebarFrameWidth - collapsedWidth),
+                                    top: 0,
+                                    bottom: 0,
+                                    width: sidebarFrameWidth,
+                                    child: _buildWideSidebar(list),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: MouseRegion(
+                              onEnter: (_) => _hideSidebar(),
+                              child: Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: selectedId == null
+                                    ? _buildEmptySelection(context)
+                                    : NoteEditorPane(noteId: selectedId),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    );
-                  }
+                      if (!_isSidebarVisible)
+                        Positioned(
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: hoverWidth,
+                          child: MouseRegion(
+                            onEnter: (_) => _showSidebar(),
+                            child: const ColoredBox(
+                              color: Colors.transparent,
+                              child: SizedBox.expand(),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
                 },
               );
 
-              if (!isWide) {
-                if (selectedId != null) {
-                  return NoteEditorPane(noteId: selectedId);
-                }
-                return Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-                  child: list,
-                );
-              }
-
-              return Stack(
-                children: [
-                  Row(
-                    children: [
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeOutCubic,
-                        width: _isSidebarVisible
-                            ? _sidebarWidth + 28
-                            : _sidebarPeekWidth,
-                        child: ClipRect(
-                          child: Stack(
-                            children: [
-                              AnimatedPositioned(
-                                duration: const Duration(milliseconds: 220),
-                                curve: Curves.easeOutCubic,
-                                left: _isSidebarVisible
-                                    ? 0
-                                    : -(_sidebarWidth + 28 - _sidebarPeekWidth),
-                                top: 0,
-                                bottom: 0,
-                                width: _sidebarWidth + 28,
-                                child: _buildWideSidebar(list),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: MouseRegion(
-                          onEnter: (_) => _hideSidebar(),
-                          child: Padding(
-                            padding: const EdgeInsets.all(8),
-                            child: selectedId == null
-                                ? _buildEmptySelection(context, isWide: isWide)
-                                : NoteEditorPane(noteId: selectedId),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (!_isSidebarVisible)
-                    Positioned(
-                      left: 0,
-                      top: 0,
-                      bottom: 0,
-                      width: _sidebarHoverWidth,
-                      child: MouseRegion(
-                        onEnter: (_) => _showSidebar(),
-                        child: const ColoredBox(
-                          color: Colors.transparent,
-                          child: SizedBox.expand(),
-                        ),
-                      ),
-                    ),
-                ],
-              );
-            },
-            error: (e, _) => Center(child: Text('エラー: $e')),
-            loading: () => const Center(child: CircularProgressIndicator()),
+        return Scaffold(
+          key: _scaffoldKey,
+          drawer: useDrawerLayout ? _buildMobileDrawer(context, list) : null,
+          appBar: useDrawerLayout
+              ? _buildMobileAppBar(context, showingEditor: selectedId != null)
+              : null,
+          body: ColoredBox(
+            color: theme.scaffoldBackgroundColor,
+            child: SafeArea(top: false, bottom: false, child: content),
           ),
-        ),
+        );
+      },
+      error: (e, _) => Scaffold(
+        appBar: useDrawerLayout
+            ? _buildMobileAppBar(context, showingEditor: selectedId != null)
+            : null,
+        body: Center(child: Text('エラー: $e')),
+      ),
+      loading: () => Scaffold(
+        appBar: useDrawerLayout
+            ? _buildMobileAppBar(context, showingEditor: selectedId != null)
+            : null,
+        body: const Center(child: CircularProgressIndicator()),
       ),
     );
   }
@@ -301,12 +378,41 @@ class _NotesList extends ConsumerWidget {
     required this.selectedId,
     this.bottomPadding = 0,
     required this.onSelect,
+    required this.onCreateNote,
   });
 
   final List<Note> notes;
   final String? selectedId;
   final double bottomPadding;
   final Future<void> Function(String noteId) onSelect;
+  final VoidCallback onCreateNote;
+
+  Widget _buildHeader(BuildContext context, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              decoration: appInputDecoration(
+                hintText: '検索',
+                prefixIcon: const Icon(Icons.search_rounded),
+                isDense: true,
+              ),
+              onChanged: (v) =>
+                  ref.read(notesSearchQueryProvider.notifier).state = v,
+            ),
+          ),
+          const SizedBox(width: 10),
+          IconButton.filledTonal(
+            tooltip: '新規メモ',
+            onPressed: onCreateNote,
+            icon: const Icon(Icons.add_rounded),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _showNoteMenu(
     BuildContext context,
@@ -425,18 +531,7 @@ class _NotesList extends ConsumerWidget {
     if (notes.isEmpty) {
       return Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
-            child: TextField(
-              decoration: appInputDecoration(
-                hintText: '検索',
-                prefixIcon: const Icon(Icons.search_rounded),
-                isDense: true,
-              ),
-              onChanged: (v) =>
-                  ref.read(notesSearchQueryProvider.notifier).state = v,
-            ),
-          ),
+          _buildHeader(context, ref),
           Expanded(
             child: Center(
               child: ConstrainedBox(
@@ -456,7 +551,7 @@ class _NotesList extends ConsumerWidget {
                       Text('まだメモがありません', style: theme.textTheme.titleMedium),
                       const SizedBox(height: 8),
                       Text(
-                        '右下のボタンから、最初のメモを気軽に作れます。',
+                        '＋ボタンから、最初のメモを気軽に作れます。',
                         textAlign: TextAlign.center,
                         style: theme.textTheme.bodyMedium,
                       ),
@@ -472,18 +567,7 @@ class _NotesList extends ConsumerWidget {
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
-          child: TextField(
-            decoration: appInputDecoration(
-              hintText: '検索',
-              prefixIcon: const Icon(Icons.search_rounded),
-              isDense: true,
-            ),
-            onChanged: (v) =>
-                ref.read(notesSearchQueryProvider.notifier).state = v,
-          ),
-        ),
+        _buildHeader(context, ref),
         Expanded(
           child: ListView.builder(
             padding: EdgeInsets.fromLTRB(20, 6, 20, bottomPadding),

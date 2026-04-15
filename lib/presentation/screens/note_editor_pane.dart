@@ -15,6 +15,7 @@ import '../../services/ai_service.dart';
 import '../../services/clipboard_media_service.dart';
 import '../../data/repositories/tag_dictionary_repository.dart';
 import '../providers/attachment_repository_provider.dart';
+import '../providers/ai_chat_session_provider.dart';
 import '../providers/ai_providers.dart';
 import '../providers/app_settings_controller.dart';
 import '../providers/note_repository_provider.dart';
@@ -86,20 +87,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   int? _runningPresetIndex;
   AiEditScope _promptScope = AiEditScope.full;
   String _lastScopeKey = '';
-  bool _aiImageContextEnabled = false;
-  bool _aiNoteContextEnabled = true;
   bool _isDragOver = false;
   bool _isChatDragOver = false;
   Note? _attachmentNote;
   double _editorWidth = 0;
-  bool _aiChatOpen = false;
-  bool _aiChatBusy = false;
   bool _isResizingAiChat = false;
-  double _aiChatPreferredWidth = 520;
-  int _aiChatToken = 0;
-  int _selectedChatSystemPromptIndex = 0;
-  List<_AiChatMessage> _aiChatMessages = const [];
-  List<_AiChatDraftImage> _aiChatDraftImages = const [];
 
   int _countText(String text, bool excludeSymbols) {
     if (!excludeSymbols) return text.runes.length;
@@ -193,7 +185,12 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     try {
       final settings = ref.read(appSettingsProvider);
       final ai = ref.read(aiServiceProvider);
-      final images = await _collectAiImages(note);
+      final images = await _collectAiImages(
+        note,
+        includeImages: ref
+            .read(aiChatSessionProvider(widget.noteId))
+            .includeImageContext,
+      );
       final result = await ai.editTextWithImages(
         instruction: preset.prompt,
         originalText: target.originalText,
@@ -256,6 +253,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       focusNode: _focusNode,
     );
     _controller.addListener(_onTextChanged);
+    _aiChatController.addListener(_onAiChatTextChanged);
 
     _quickLaunchSub = ref.listenManual<int>(quickLaunchEventProvider, (
       previous,
@@ -280,6 +278,12 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     _externalPasteGuard.onTextChanged();
   }
 
+  void _onAiChatTextChanged() {
+    ref
+        .read(aiChatSessionProvider(widget.noteId).notifier)
+        .setDraftText(_aiChatController.text);
+  }
+
   @override
   void didUpdateWidget(covariant NoteEditorPane oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -295,12 +299,6 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       _titleController.text = '';
       _editingTitle = false;
       _lastDuplicateTitle = null;
-      _aiChatController.clear();
-      _aiChatMessages = const [];
-      _aiChatDraftImages = const [];
-      _aiChatOpen = false;
-      _aiChatBusy = false;
-      _selectedChatSystemPromptIndex = 0;
       _markFocusPending();
     }
   }
@@ -314,6 +312,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     _externalPasteSub?.close();
     _controller.dispose();
     _titleController.dispose();
+    _aiChatController.removeListener(_onAiChatTextChanged);
     _aiChatController.dispose();
     _titleFocusNode.dispose();
     _aiChatFocusNode.dispose();
@@ -704,6 +703,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
 
     final images = await _collectAiImages(
       note,
+      includeImages: ref
+          .read(aiChatSessionProvider(widget.noteId))
+          .includeImageContext,
       overrideAttachment: imageOverride,
     );
     if (!mounted) return;
@@ -764,10 +766,13 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     return options;
   }
 
-  _AiChatPromptOption _selectedChatPrompt(AppSettings settings) {
+  _AiChatPromptOption _selectedChatPrompt(
+    AppSettings settings,
+    AiChatSessionState session,
+  ) {
     final options = _chatPromptOptions(settings);
     for (final option in options) {
-      if (option.index == _selectedChatSystemPromptIndex) {
+      if (option.index == session.selectedPromptIndex) {
         return option;
       }
     }
@@ -775,9 +780,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   }
 
   void _openAiChat() {
-    if (!_aiChatOpen && mounted) {
-      setState(() => _aiChatOpen = true);
-    }
+    ref.read(aiChatSessionProvider(widget.noteId).notifier).open();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       FocusScope.of(context).requestFocus(_aiChatFocusNode);
@@ -786,48 +789,49 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   }
 
   void _closeAiChat() {
-    if (!mounted) return;
+    ref.read(aiChatSessionProvider(widget.noteId).notifier).close();
     setState(() {
-      _aiChatOpen = false;
       _isChatDragOver = false;
       _isResizingAiChat = false;
     });
   }
 
   void _resetAiChat() {
-    if (!mounted) return;
-    _aiChatToken++;
-    _aiChatController.clear();
-    setState(() {
-      _aiChatMessages = const [];
-      _aiChatDraftImages = const [];
-      _aiChatBusy = false;
-      _isChatDragOver = false;
-    });
+    ref.read(aiChatSessionProvider(widget.noteId).notifier).reset();
+    setState(() => _isChatDragOver = false);
     showTopRightToast(context, 'AIチャットをリセットしました。');
     _openAiChat();
   }
 
-  double _resolveAiChatWidth(double availableWidth) {
-    if (!_aiChatOpen) return 0;
+  double _resolveAiChatWidth(
+    double availableWidth,
+    AiChatSessionState session,
+  ) {
+    if (!session.isOpen) return 0;
     if (availableWidth < 720) return availableWidth;
     final maxWidth = (availableWidth - _minEditorPaneWidth).clamp(
       _minAiChatPaneWidth,
       _maxAiChatPaneWidth,
     );
-    return _aiChatPreferredWidth.clamp(_minAiChatPaneWidth, maxWidth);
+    return session.preferredWidth.clamp(_minAiChatPaneWidth, maxWidth);
   }
 
-  void _resizeAiChat(double delta, double availableWidth) {
+  void _resizeAiChat(
+    double delta,
+    double availableWidth,
+    AiChatSessionState session,
+  ) {
     if (availableWidth < 720) return;
-    final next = (_aiChatPreferredWidth - delta).clamp(
+    final next = (session.preferredWidth - delta).clamp(
       _minAiChatPaneWidth,
       (availableWidth - _minEditorPaneWidth).clamp(
         _minAiChatPaneWidth,
         _maxAiChatPaneWidth,
       ),
     );
-    setState(() => _aiChatPreferredWidth = next);
+    ref
+        .read(aiChatSessionProvider(widget.noteId).notifier)
+        .setPreferredWidth(next);
   }
 
   void _scrollAiChatToBottom({bool jump = false}) {
@@ -876,23 +880,21 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
 
   Future<void> _handleAiChatPaste() async {
     final imageBytes = await _clipboardMediaService.readImagePng();
+    if (!mounted) return;
     if (imageBytes != null && imageBytes.isNotEmpty) {
-      if (!mounted) return;
-      setState(() {
-        _aiChatDraftImages = [
-          ..._aiChatDraftImages,
-          _AiChatDraftImage(
-            bytes: imageBytes,
-            mimeType: 'image/png',
-            label: 'クリップボード画像',
-          ),
-        ];
-      });
+      ref.read(aiChatSessionProvider(widget.noteId).notifier).addDraftImages([
+        AiChatDraftImageState(
+          bytes: imageBytes,
+          mimeType: 'image/png',
+          label: 'クリップボード画像',
+        ),
+      ]);
       showTopRightToast(context, '画像を追加しました。');
       return;
     }
 
     final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
     final text = data?.text;
     if (text == null || text.isEmpty) return;
     final value = _aiChatController.value;
@@ -913,6 +915,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     KeyEvent event,
     Note note,
     AppSettings settings,
+    AiChatSessionState session,
   ) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -936,7 +939,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
         ? (keyboard.isMetaPressed || keyboard.isControlPressed)
         : keyboard.isControlPressed;
     if (isSubmitKey && isSubmitShortcutPressed) {
-      unawaited(_sendAiChat(note, settings));
+      unawaited(_sendAiChat(note, settings, session));
       return KeyEventResult.handled;
     }
 
@@ -959,7 +962,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     return normalized.substring(index + 1);
   }
 
-  Future<_AiChatDraftImage?> _loadChatDraftImageFromPath(
+  Future<AiChatDraftImageState?> _loadChatDraftImageFromPath(
     String path, {
     Uint8List? bookmark,
   }) async {
@@ -974,7 +977,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     }
     try {
       final bytes = await file.readAsBytes();
-      return _AiChatDraftImage(
+      return AiChatDraftImageState(
         bytes: bytes,
         mimeType: _mimeTypeFromPath(path),
         label: _basename(path),
@@ -989,7 +992,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   }
 
   Future<void> _handleChatDrop(List<DropItem> items) async {
-    final added = <_AiChatDraftImage>[];
+    final added = <AiChatDraftImageState>[];
     var unsupported = 0;
     for (final item in items) {
       if (item is DropItemDirectory) continue;
@@ -1005,96 +1008,39 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     }
     if (!mounted) return;
     if (added.isNotEmpty) {
-      setState(() => _aiChatDraftImages = [..._aiChatDraftImages, ...added]);
+      ref
+          .read(aiChatSessionProvider(widget.noteId).notifier)
+          .addDraftImages(added);
       showTopRightToast(context, '画像を追加しました。');
     } else if (unsupported > 0) {
       showTopRightToast(context, '対応形式は png / jpeg / webp です。');
     }
   }
 
-  Future<void> _sendAiChat(Note note, AppSettings settings) async {
-    if (_aiChatBusy) return;
-    final text = _aiChatController.text.trim();
-    final draftImages = List<_AiChatDraftImage>.from(_aiChatDraftImages);
-    if (text.isEmpty && draftImages.isEmpty) return;
+  Future<void> _sendAiChat(
+    Note note,
+    AppSettings settings,
+    AiChatSessionState session,
+  ) async {
+    if (session.isBusy) return;
 
-    final selectedPrompt = _selectedChatPrompt(settings);
-    final previousMessages = _aiChatMessages
-        .where((message) => !message.isLoading)
-        .toList(growable: false);
-    final userMessage = _AiChatMessage(
-      role: AiChatRole.user,
-      text: text,
-      images: draftImages,
+    final selectedPrompt = _selectedChatPrompt(settings, session);
+    final noteImages = await _collectAiImages(
+      note,
+      includeImages: session.includeImageContext,
     );
-    final token = ++_aiChatToken;
-
-    setState(() {
-      _aiChatBusy = true;
-      _aiChatController.clear();
-      _aiChatDraftImages = const [];
-      _aiChatOpen = true;
-      _aiChatMessages = [
-        ..._aiChatMessages,
-        userMessage,
-        const _AiChatMessage(
-          role: AiChatRole.assistant,
-          text: '',
-          isLoading: true,
-        ),
-      ];
-    });
-    _scrollAiChatToBottom();
-
-    try {
-      final noteImages = await _collectAiImages(note);
-      final history = [
-        ...previousMessages.map((message) => message.toInput()),
-        userMessage.toInput(),
-      ];
-      final ai = ref.read(aiServiceProvider);
-      final response = await ai.chatWithNote(
-        noteTitle: _titleController.text,
-        noteContent: _controller.text,
-        noteImages: noteImages,
-        history: history,
-        systemPrompt: selectedPrompt.definition.prompt,
-        includeNoteContext: _aiNoteContextEnabled,
-        useAppleIntelligence: settings.aiAppleIntelligenceEnabled,
-        useExternalApi: settings.aiExternalApiEnabled,
-      );
-      if (!mounted || token != _aiChatToken) return;
-      setState(() {
-        final nextMessages = List<_AiChatMessage>.from(_aiChatMessages);
-        final loadingIndex = nextMessages.lastIndexWhere(
-          (message) =>
-              message.role == AiChatRole.assistant && message.isLoading,
+    final message = await ref
+        .read(aiChatSessionProvider(widget.noteId).notifier)
+        .send(
+          noteTitle: _titleController.text,
+          noteContent: _controller.text,
+          noteImages: noteImages,
+          systemPrompt: selectedPrompt.definition.prompt,
         );
-        if (loadingIndex >= 0) {
-          nextMessages[loadingIndex] = _AiChatMessage(
-            role: AiChatRole.assistant,
-            text: response,
-          );
-        } else {
-          nextMessages.add(
-            _AiChatMessage(role: AiChatRole.assistant, text: response),
-          );
-        }
-        _aiChatMessages = nextMessages;
-        _aiChatBusy = false;
-      });
-      _scrollAiChatToBottom();
-    } catch (e) {
-      if (!mounted || token != _aiChatToken) return;
-      final message = e is AiException ? e.message : 'AIチャットに失敗しました。';
-      setState(() {
-        _aiChatBusy = false;
-        _aiChatMessages = _aiChatMessages
-            .where((entry) => !entry.isLoading)
-            .toList(growable: false);
-        _aiChatController.text = text;
-        _aiChatDraftImages = draftImages;
-      });
+
+    if (!mounted) return;
+    _scrollAiChatToBottom();
+    if (message != null) {
       showTopRightToast(context, message);
       _openAiChat();
     }
@@ -1306,9 +1252,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
 
   Future<List<AiImageInput>> _collectAiImages(
     Note note, {
+    required bool includeImages,
     NoteAttachment? overrideAttachment,
   }) async {
-    if (!_aiImageContextEnabled) return const [];
+    if (!includeImages) return const [];
     final limit = ref.read(appSettingsProvider).aiImageSendLimit;
     if (limit <= 0) return const [];
     final source = overrideAttachment != null
@@ -1366,6 +1313,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
               builder: (context, ref, _) {
                 final noteAsync = ref.watch(noteByIdProvider(widget.noteId));
                 final settings = ref.watch(appSettingsProvider);
+                final session = ref.watch(aiChatSessionProvider(widget.noteId));
                 final note = noteAsync.valueOrNull ?? initialNote;
                 final attachments = note.attachments;
 
@@ -1383,14 +1331,15 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                           subtitle: Text(
                             'AI送信時は最大${settings.aiImageSendLimit}枚まで',
                           ),
-                          value: _aiImageContextEnabled,
+                          value: session.includeImageContext,
                           onChanged: settings.aiImageSendLimit > 0
-                              ? (value) {
-                                  setState(
-                                    () => _aiImageContextEnabled = value,
-                                  );
-                                  setDialogState(() {});
-                                }
+                              ? (value) => ref
+                                    .read(
+                                      aiChatSessionProvider(
+                                        widget.noteId,
+                                      ).notifier,
+                                    )
+                                    .setIncludeImageContext(value)
                               : null,
                         ),
                         const SizedBox(height: 8),
@@ -1564,17 +1513,24 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     );
   }
 
-  Widget _buildAiChatPanel(Note note, AppSettings settings) {
+  Widget _buildAiChatPanel(
+    Note note,
+    AppSettings settings,
+    AiChatSessionState session,
+  ) {
     final theme = Theme.of(context);
     final promptOptions = _chatPromptOptions(settings);
-    final selectedPrompt = _selectedChatPrompt(settings);
-    final hasNoteImages = _aiImageContextEnabled && note.attachments.isNotEmpty;
+    final selectedPrompt = _selectedChatPrompt(settings, session);
+    final modelOptionsAsync = ref.watch(aiSelectableModelsProvider);
+    final hasNoteImages =
+        session.includeImageContext && note.attachments.isNotEmpty;
     final hasNoteContext =
-        _aiNoteContextEnabled &&
+        session.includeNoteContext &&
         (note.title.trim().isNotEmpty || note.content.trim().isNotEmpty);
     final modelLabel = settings.aiExternalApiEnabled
         ? 'モデル: ${settings.aiExternalModel.trim().isEmpty ? '未設定' : settings.aiExternalModel.trim()}'
         : 'Apple Intelligence';
+    final currentModel = settings.aiExternalModel.trim();
 
     return Stack(
       children: [
@@ -1595,9 +1551,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                       child: PopupMenuButton<int>(
                         icon: const Icon(Icons.tune_rounded),
                         onSelected: (value) {
-                          setState(
-                            () => _selectedChatSystemPromptIndex = value,
-                          );
+                          ref
+                              .read(
+                                aiChatSessionProvider(widget.noteId).notifier,
+                              )
+                              .setSelectedPromptIndex(value);
                         },
                         itemBuilder: (context) => [
                           for (final option in promptOptions)
@@ -1609,25 +1567,26 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                       ),
                     ),
                     Tooltip(
-                      message: _aiNoteContextEnabled
+                      message: session.includeNoteContext
                           ? (hasNoteContext
                                 ? 'メモ本文をAIに含める: ON'
                                 : 'メモ本文をAIに含める: ON（本文は空です）')
                           : 'メモ本文をAIに含める: OFF',
                       child: IconButton(
                         onPressed: () {
-                          setState(() {
-                            _aiNoteContextEnabled = !_aiNoteContextEnabled;
-                          });
+                          final next = !session.includeNoteContext;
+                          ref
+                              .read(
+                                aiChatSessionProvider(widget.noteId).notifier,
+                              )
+                              .setIncludeNoteContext(next);
                           showTopRightToast(
                             context,
-                            _aiNoteContextEnabled
-                                ? 'メモ本文の参照をONにしました。'
-                                : 'メモ本文の参照をOFFにしました。',
+                            next ? 'メモ本文の参照をONにしました。' : 'メモ本文の参照をOFFにしました。',
                           );
                         },
                         icon: Icon(
-                          _aiNoteContextEnabled
+                          session.includeNoteContext
                               ? Icons.description_rounded
                               : Icons.description_outlined,
                         ),
@@ -1635,9 +1594,60 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                     ),
                     Tooltip(
                       message: modelLabel,
-                      child: IconButton(
-                        onPressed: () => showTopRightToast(context, modelLabel),
+                      child: PopupMenuButton<String>(
                         icon: const Icon(Icons.memory_rounded),
+                        onSelected: (value) {
+                          if (value == '__refresh_models__') {
+                            ref.invalidate(aiSelectableModelsProvider);
+                            return;
+                          }
+                          if (value == currentModel) return;
+                          ref
+                              .read(appSettingsProvider.notifier)
+                              .setAiExternalModel(value);
+                          showTopRightToast(context, 'AIモデルを切り替えました。');
+                        },
+                        itemBuilder: (context) {
+                          return modelOptionsAsync.when(
+                            data: (models) {
+                              if (models.isEmpty) {
+                                return const [
+                                  PopupMenuItem<String>(
+                                    enabled: false,
+                                    child: Text('選択できるモデルがありません'),
+                                  ),
+                                ];
+                              }
+                              return [
+                                for (final model in models)
+                                  CheckedPopupMenuItem<String>(
+                                    value: model,
+                                    checked: model == currentModel,
+                                    child: Text(
+                                      model,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                              ];
+                            },
+                            loading: () => const [
+                              PopupMenuItem<String>(
+                                enabled: false,
+                                child: Text('モデルを読み込み中…'),
+                              ),
+                            ],
+                            error: (error, _) => const [
+                              PopupMenuItem<String>(
+                                enabled: false,
+                                child: Text('モデル一覧を取得できませんでした'),
+                              ),
+                              PopupMenuItem<String>(
+                                value: '__refresh_models__',
+                                child: Text('再読み込み'),
+                              ),
+                            ],
+                          );
+                        },
                       ),
                     ),
                     if (hasNoteImages)
@@ -1648,7 +1658,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                           icon: const Icon(Icons.image_outlined),
                         ),
                       ),
-                    if (_aiChatBusy)
+                    if (session.isBusy)
                       const Padding(
                         padding: EdgeInsets.symmetric(horizontal: 8),
                         child: SizedBox(
@@ -1672,7 +1682,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
               ),
               const Divider(height: 1),
               Expanded(
-                child: _aiChatMessages.isEmpty
+                child: session.messages.isEmpty
                     ? Center(
                         child: Text(
                           'AIに相談したい内容を入力してください',
@@ -1686,35 +1696,44 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                         padding: const EdgeInsets.all(12),
                         itemBuilder: (context, index) {
                           return _buildAiChatMessageCard(
-                            _aiChatMessages[index],
+                            session.messages[index],
                           );
                         },
                         separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemCount: _aiChatMessages.length,
+                        itemCount: session.messages.length,
                       ),
               ),
               const Divider(height: 1),
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
                 child: Focus(
-                  onKeyEvent: (node, event) =>
-                      _handleAiChatComposerKey(node, event, note, settings),
+                  onKeyEvent: (node, event) => _handleAiChatComposerKey(
+                    node,
+                    event,
+                    note,
+                    settings,
+                    session,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (_aiChatDraftImages.isNotEmpty) ...[
+                      if (session.draftImages.isNotEmpty) ...[
                         Wrap(
                           spacing: 8,
                           runSpacing: 8,
                           children: [
-                            for (final image in _aiChatDraftImages)
+                            for (
+                              var index = 0;
+                              index < session.draftImages.length;
+                              index++
+                            )
                               Stack(
                                 clipBehavior: Clip.none,
                                 children: [
                                   ClipRRect(
                                     borderRadius: BorderRadius.circular(10),
                                     child: Image.memory(
-                                      image.bytes,
+                                      session.draftImages[index].bytes,
                                       width: 68,
                                       height: 68,
                                       fit: BoxFit.cover,
@@ -1730,14 +1749,13 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                             theme.colorScheme.surface,
                                       ),
                                       onPressed: () {
-                                        setState(() {
-                                          _aiChatDraftImages =
-                                              _aiChatDraftImages
-                                                  .where(
-                                                    (draft) => draft != image,
-                                                  )
-                                                  .toList();
-                                        });
+                                        ref
+                                            .read(
+                                              aiChatSessionProvider(
+                                                widget.noteId,
+                                              ).notifier,
+                                            )
+                                            .removeDraftImageAt(index);
                                       },
                                       icon: const Icon(Icons.close, size: 16),
                                     ),
@@ -1780,9 +1798,13 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                   alignment: Alignment.bottomCenter,
                                   child: IconButton.filled(
                                     tooltip: '送信',
-                                    onPressed: _aiChatBusy
+                                    onPressed: session.isBusy
                                         ? null
-                                        : () => _sendAiChat(note, settings),
+                                        : () => _sendAiChat(
+                                            note,
+                                            settings,
+                                            session,
+                                          ),
                                     icon: const Icon(Icons.send_rounded),
                                   ),
                                 ),
@@ -1815,7 +1837,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     );
   }
 
-  Widget _buildAiChatMessageCard(_AiChatMessage message) {
+  Widget _buildAiChatMessageCard(AiChatMessageState message) {
     final theme = Theme.of(context);
     final isUser = message.role == AiChatRole.user;
     final alignment = isUser ? Alignment.centerRight : Alignment.centerLeft;
@@ -1909,6 +1931,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   Widget build(BuildContext context) {
     final noteAsync = ref.watch(noteByIdProvider(widget.noteId));
     final settings = ref.watch(appSettingsProvider);
+    final session = ref.watch(aiChatSessionProvider(widget.noteId));
     final canGoBack = Navigator.of(context).canPop();
 
     return noteAsync.when(
@@ -1935,6 +1958,14 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                 _titleController.text == _lastTitleLoaded)) {
           _titleController.text = note.title;
           _lastTitleLoaded = note.title;
+        }
+        if (_aiChatController.text != session.draftText) {
+          _aiChatController.value = TextEditingValue(
+            text: session.draftText,
+            selection: TextSelection.collapsed(
+              offset: session.draftText.length,
+            ),
+          );
         }
 
         final selection = _controller.selection;
@@ -2155,7 +2186,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                         clipBehavior: Clip.none,
                                         children: [
                                           Icon(
-                                            _aiImageContextEnabled
+                                            session.includeImageContext
                                                 ? Icons.add_photo_alternate
                                                 : Icons
                                                       .add_photo_alternate_outlined,
@@ -2287,9 +2318,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final isResizableLayout =
-                          _aiChatOpen && constraints.maxWidth >= 720;
+                          session.isOpen && constraints.maxWidth >= 720;
                       final chatWidth = _resolveAiChatWidth(
                         constraints.maxWidth,
+                        session,
                       );
                       return Row(
                         children: [
@@ -2468,6 +2500,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                   _resizeAiChat(
                                     details.delta.dx,
                                     constraints.maxWidth,
+                                    session,
                                   );
                                 },
                                 onHorizontalDragEnd: (_) {
@@ -2514,7 +2547,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                             duration: const Duration(milliseconds: 220),
                             curve: Curves.easeOutCubic,
                             width: chatWidth,
-                            child: _aiChatOpen
+                            child: session.isOpen
                                 ? DropTarget(
                                     onDragEntered: (_) =>
                                         setState(() => _isChatDragOver = true),
@@ -2524,7 +2557,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                       setState(() => _isChatDragOver = false);
                                       await _handleChatDrop(details.files);
                                     },
-                                    child: _buildAiChatPanel(note, settings),
+                                    child: _buildAiChatPanel(
+                                      note,
+                                      settings,
+                                      session,
+                                    ),
                                   )
                                 : null,
                           ),
@@ -2551,44 +2588,6 @@ class _AiChatPromptOption {
 
   final int index;
   final AiChatSystemPrompt definition;
-}
-
-class _AiChatDraftImage {
-  const _AiChatDraftImage({
-    required this.bytes,
-    required this.mimeType,
-    required this.label,
-  });
-
-  final Uint8List bytes;
-  final String mimeType;
-  final String label;
-
-  AiImageInput toInput() {
-    return AiImageInput(bytes: bytes, mimeType: mimeType);
-  }
-}
-
-class _AiChatMessage {
-  const _AiChatMessage({
-    required this.role,
-    required this.text,
-    this.images = const [],
-    this.isLoading = false,
-  });
-
-  final AiChatRole role;
-  final String text;
-  final List<_AiChatDraftImage> images;
-  final bool isLoading;
-
-  AiChatMessageInput toInput() {
-    return AiChatMessageInput(
-      role: role,
-      text: text,
-      images: images.map((image) => image.toInput()).toList(growable: false),
-    );
-  }
 }
 
 class AiEditTarget {

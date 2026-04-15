@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -21,7 +24,9 @@ import 'package:patto/presentation/screens/note_editor_pane.dart';
 import 'package:patto/presentation/screens/notes_home_screen.dart';
 import 'package:patto/presentation/screens/settings_screen.dart';
 import 'package:patto/presentation/theme/patto_theme.dart';
+import 'package:patto/services/ai_service.dart';
 import 'package:patto/services/ai_key_repository.dart';
+import 'package:patto/services/apple_intelligence_client.dart';
 import 'package:patto/services/shortcut_service.dart';
 
 void main() {
@@ -79,6 +84,7 @@ void main() {
 
     expect(find.text('検索'), findsOneWidget);
     expect(find.text('会議メモ'), findsOneWidget);
+    expect(find.byTooltip('新規メモ'), findsOneWidget);
     expect(find.text('やることを整理する'), findsNothing);
     expect(find.byType(FloatingActionButton), findsNothing);
   });
@@ -110,6 +116,11 @@ void main() {
   testWidgets('NotesHomeScreen keeps editor visible on narrow width', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(430, 932);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final note = _buildNote(
       id: 'note-selected',
       title: '編集中メモ',
@@ -126,7 +137,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('この内容を維持したい'), findsOneWidget);
-    expect(find.byIcon(Icons.arrow_back_rounded), findsOneWidget);
+    expect(find.byTooltip('メモ一覧に戻る'), findsOneWidget);
   });
 
   testWidgets('NotesHomeScreen returns to list after closing mobile editor', (
@@ -152,13 +163,77 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('戻ると一覧に戻りたい'), findsOneWidget);
 
-    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
-    navigator.pop();
+    await tester.tap(find.byTooltip('メモ一覧に戻る'));
     await tester.pumpAndSettle();
 
     expect(find.text('検索'), findsOneWidget);
     expect(find.text('モバイル確認'), findsOneWidget);
     expect(find.text('戻ると一覧に戻りたい'), findsNothing);
+  });
+
+  testWidgets('NotesHomeScreen opens drawer from hamburger on narrow editor', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 932);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final note = _buildNote(
+      id: 'note-drawer',
+      title: 'ドロワー確認',
+      content: '一覧を開きたい',
+    );
+
+    await tester.pumpWidget(
+      await _buildScreenShell(
+        const NotesHomeScreen(),
+        notes: [note],
+        selectedNoteId: note.uuid,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+
+    expect(find.text('検索'), findsOneWidget);
+    expect(find.text('ドロワー確認'), findsWidgets);
+    expect(find.byTooltip('設定'), findsWidgets);
+  });
+
+  testWidgets('NotesHomeScreen shows mobile menu and updated empty copy', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 932);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(await _buildScreenShell(const NotesHomeScreen()));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.menu), findsOneWidget);
+    expect(find.byTooltip('新規メモ'), findsOneWidget);
+    expect(find.text('＋ボタンから、最初のメモを気軽に作れます。'), findsOneWidget);
+  });
+
+  testWidgets('NotesHomeScreen creates a note from mobile list header', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 932);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(await _buildScreenShell(const NotesHomeScreen()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('新規メモ'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(NoteEditorPane), findsOneWidget);
+    expect(find.byTooltip('メモ一覧に戻る'), findsOneWidget);
   });
 
   testWidgets('SettingsScreen smoke test', (tester) async {
@@ -194,6 +269,33 @@ void main() {
     expect(find.text('Soft Pastel'), findsOneWidget);
     expect(find.text('Plain Soft'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('SettingsScreen mobile drawer jumps to chat prompt section', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(await _buildScreenShell(const SettingsScreen()));
+    await tester.pumpAndSettle();
+
+    final chatPromptFinder = find.text('AIチャットプロンプト');
+    final initialDy = tester.getTopLeft(chatPromptFinder).dy;
+    expect(initialDy, greaterThan(700));
+
+    final scaffold = tester.state<ScaffoldState>(find.byType(Scaffold).first);
+    scaffold.openDrawer();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('AIチャット文面').last);
+    await tester.pumpAndSettle();
+
+    final jumpedDy = tester.getTopLeft(chatPromptFinder).dy;
+    expect(jumpedDy, lessThan(initialDy));
+    expect(jumpedDy, lessThan(initialDy - 250));
   });
 
   testWidgets('SettingsScreen desktop nav jumps to chat prompt section', (
@@ -320,17 +422,192 @@ void main() {
     expect(find.text('AIに相談したい内容を入力してください'), findsOneWidget);
     await tester.pump(const Duration(seconds: 4));
   });
+
+  testWidgets('NoteEditorPane keeps AI chat draft after rebuild', (
+    tester,
+  ) async {
+    final note = _buildNote(
+      id: 'note-editor-chat-persist',
+      title: '保持確認',
+      content: 'チャット状態を維持したい',
+    );
+
+    await tester.pumpWidget(
+      await _buildScreenShell(
+        _EditorSwapHarness(noteId: note.uuid),
+        notes: [note],
+        aiEnabled: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.chat_bubble_outline));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, '画面を切り替えても残したい');
+    await tester.pump();
+
+    await tester.tap(find.text('別画面へ'));
+    await tester.pumpAndSettle();
+    expect(find.text('別画面'), findsOneWidget);
+
+    await tester.tap(find.text('エディタへ戻る'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('画面を切り替えても残したい'), findsOneWidget);
+    expect(find.byTooltip('チャットをリセット'), findsOneWidget);
+  });
+
+  testWidgets('NoteEditorPane model menu switches selectable models', (
+    tester,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'themeStyle',
+      AppThemeStyle.softPastel.toStorageString(),
+    );
+    await prefs.setBool('darkModeEnabled', false);
+
+    final controller = AppSettingsController(prefs: prefs, uuid: const Uuid());
+    await controller.setAiExternalApiEnabled(true);
+    await controller.setAiExternalProvider(AiExternalProvider.openAiCompatible);
+    await controller.setAiExternalModel('model-alpha');
+
+    final note = _buildNote(
+      id: 'note-editor-model-switch',
+      title: 'モデル切替',
+      content: '利用可能なモデルだけを出したい',
+    );
+    final repository = _FakeNoteRepository(notes: [note], drafts: const []);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefs),
+          supabaseConfigProvider.overrideWithValue(null),
+          appSettingsProvider.overrideWith((ref) => controller),
+          noteRepositoryProvider.overrideWithValue(repository),
+          shortcutServiceProvider.overrideWithValue(_TestShortcutService()),
+          aiKeyRepositoryProvider.overrideWithValue(_TestAiKeyRepository()),
+          aiServiceProvider.overrideWithValue(
+            _FakeAiService(
+              settings: controller.state,
+              models: const ['model-alpha', 'model-beta'],
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: buildPattoTheme(controller.state.themeStyle),
+          home: Scaffold(body: NoteEditorPane(noteId: note.uuid)),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.chat_bubble_outline));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.memory_rounded));
+    await tester.pumpAndSettle();
+
+    expect(find.text('model-alpha'), findsOneWidget);
+    expect(find.text('model-beta'), findsOneWidget);
+
+    await tester.tap(find.text('model-beta').last, warnIfMissed: false);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 4));
+
+    expect(controller.state.aiExternalModel, 'model-beta');
+  });
+
+  testWidgets('NotesHomeScreen keeps desktop sidebar on narrow macOS width', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    tester.view.physicalSize = const Size(760, 980);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    try {
+      final note = _buildNote(
+        id: 'note-desktop-narrow',
+        title: '狭いMac幅',
+        content: '一覧を残したい',
+      );
+
+      await tester.pumpWidget(
+        await _buildScreenShell(
+          const NotesHomeScreen(),
+          notes: [note],
+          selectedNoteId: note.uuid,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.menu), findsNothing);
+      expect(find.text('検索'), findsOneWidget);
+      expect(find.text('狭いMac幅'), findsWidgets);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('PattoApp keeps AI chat during quick launch reopen', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final shortcutService = _TestShortcutService();
+    final note = _buildNote(
+      id: 'note-quick-launch-chat',
+      title: 'ショートカット保持',
+      content: 'ダブルタップ後も維持したい',
+    );
+
+    await tester.pumpWidget(
+      await _buildPattoApp(
+        themeStyle: AppThemeStyle.softPastel,
+        notes: [note],
+        aiEnabled: true,
+        shortcutService: shortcutService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('ショートカット保持'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.chat_bubble_outline));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'この相談内容を残したい');
+    await tester.pump();
+
+    await shortcutService.emitQuickLaunch(
+      const QuickLaunchEvent(
+        action: QuickLaunchAction.show,
+        source: 'shift-double-tap',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('この相談内容を残したい'), findsOneWidget);
+    expect(find.byTooltip('チャットをリセット'), findsOneWidget);
+  });
 }
 
 Future<Widget> _buildPattoApp({
   required AppThemeStyle themeStyle,
   bool darkModeEnabled = false,
+  bool aiEnabled = false,
   List<Note>? notes,
   List<Note>? drafts,
+  ShortcutService? shortcutService,
 }) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setString('themeStyle', themeStyle.toStorageString());
   await prefs.setBool('darkModeEnabled', darkModeEnabled);
+  await prefs.setBool('aiExternalApiEnabled', aiEnabled);
 
   final controller = AppSettingsController(prefs: prefs, uuid: const Uuid());
   final repository = _FakeNoteRepository(
@@ -344,7 +621,9 @@ Future<Widget> _buildPattoApp({
       supabaseConfigProvider.overrideWithValue(null),
       appSettingsProvider.overrideWith((ref) => controller),
       noteRepositoryProvider.overrideWithValue(repository),
-      shortcutServiceProvider.overrideWithValue(_TestShortcutService()),
+      shortcutServiceProvider.overrideWithValue(
+        shortcutService ?? _TestShortcutService(),
+      ),
       aiKeyRepositoryProvider.overrideWithValue(_TestAiKeyRepository()),
     ],
     child: const PattoApp(),
@@ -489,6 +768,9 @@ class _FakeNoteRepository implements NoteRepository {
 }
 
 class _TestShortcutService extends ShortcutService {
+  FutureOr<void> Function(QuickLaunchEvent event)? _quickLaunchHandler;
+  void Function(String content)? _externalPasteHandler;
+
   @override
   Future<void> configureMac({
     required MacModifierKey modifierKey,
@@ -496,10 +778,22 @@ class _TestShortcutService extends ShortcutService {
   }) async {}
 
   @override
-  void setOnQuickLaunch(void Function(QuickLaunchEvent event) onQuickLaunch) {}
+  void setOnQuickLaunch(void Function(QuickLaunchEvent event) onQuickLaunch) {
+    _quickLaunchHandler = onQuickLaunch;
+  }
 
   @override
-  void setOnExternalPaste(void Function(String content) onExternalPaste) {}
+  void setOnExternalPaste(void Function(String content) onExternalPaste) {
+    _externalPasteHandler = onExternalPaste;
+  }
+
+  Future<void> emitQuickLaunch(QuickLaunchEvent event) async {
+    await _quickLaunchHandler?.call(event);
+  }
+
+  void emitExternalPaste(String content) {
+    _externalPasteHandler?.call(content);
+  }
 }
 
 class _TestAiKeyRepository extends AiKeyRepository {
@@ -513,6 +807,55 @@ class _TestAiKeyRepository extends AiKeyRepository {
 
   @override
   Future<void> deleteKey() async {}
+}
+
+class _FakeAiService extends AiService {
+  _FakeAiService({required AppSettings settings, required this.models})
+    : super(_TestAiKeyRepository(), const AppleIntelligenceClient(), settings);
+
+  final List<String> models;
+
+  @override
+  Future<List<String>> fetchLocalModels() async => models;
+}
+
+class _EditorSwapHarness extends StatefulWidget {
+  const _EditorSwapHarness({required this.noteId});
+
+  final String noteId;
+
+  @override
+  State<_EditorSwapHarness> createState() => _EditorSwapHarnessState();
+}
+
+class _EditorSwapHarnessState extends State<_EditorSwapHarness> {
+  bool _showEditor = true;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Column(
+        children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () {
+                setState(() {
+                  _showEditor = !_showEditor;
+                });
+              },
+              child: Text(_showEditor ? '別画面へ' : 'エディタへ戻る'),
+            ),
+          ),
+          Expanded(
+            child: _showEditor
+                ? NoteEditorPane(noteId: widget.noteId)
+                : const Center(child: Text('別画面')),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 Note _buildNote({

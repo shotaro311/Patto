@@ -130,6 +130,14 @@ class _PattoAppState extends ConsumerState<PattoApp>
     }
 
     ref.read(quickLaunchSourceProvider.notifier).state = event.source;
+    final shouldRestoreCurrentScreen =
+        (_navigatorKey.currentState?.canPop() ?? false) ||
+        ref.read(selectedNoteIdProvider) != null;
+    if (shouldRestoreCurrentScreen) {
+      ref.read(quickLaunchEventProvider.notifier).state++;
+      return;
+    }
+
     final settings = ref.read(appSettingsProvider);
     _showHomeRoute();
     switch (settings.quickLaunchOpenMode) {

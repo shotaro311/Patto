@@ -724,6 +724,38 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  List<({String label, IconData icon, _SettingsSection section})>
+  get _sectionNavItems => [
+    (label: '同期', icon: Icons.sync, section: _SettingsSection.sync),
+    (
+      label: '起動と操作',
+      icon: Icons.flash_on_outlined,
+      section: _SettingsSection.quickLaunch,
+    ),
+    (
+      label: '表示',
+      icon: Icons.visibility_outlined,
+      section: _SettingsSection.display,
+    ),
+    (label: 'タグ', icon: Icons.sell_outlined, section: _SettingsSection.tags),
+    (label: 'AI', icon: Icons.auto_awesome, section: _SettingsSection.ai),
+    (
+      label: '編集プリセット',
+      icon: Icons.tune_outlined,
+      section: _SettingsSection.editPrompts,
+    ),
+    (
+      label: 'タイトル付け',
+      icon: Icons.smart_toy_outlined,
+      section: _SettingsSection.titlePrompts,
+    ),
+    (
+      label: 'AIチャット文面',
+      icon: Icons.chat_bubble_outline,
+      section: _SettingsSection.chatPrompts,
+    ),
+  ];
+
   Widget _buildSectionCard({
     required BuildContext context,
     required GlobalKey key,
@@ -853,37 +885,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Widget _buildDesktopNav() {
-    final items = <({String label, IconData icon, _SettingsSection section})>[
-      (label: '同期', icon: Icons.sync, section: _SettingsSection.sync),
-      (
-        label: '起動と操作',
-        icon: Icons.flash_on_outlined,
-        section: _SettingsSection.quickLaunch,
-      ),
-      (
-        label: '表示',
-        icon: Icons.visibility_outlined,
-        section: _SettingsSection.display,
-      ),
-      (label: 'タグ', icon: Icons.sell_outlined, section: _SettingsSection.tags),
-      (label: 'AI', icon: Icons.auto_awesome, section: _SettingsSection.ai),
-      (
-        label: '編集プリセット',
-        icon: Icons.tune_outlined,
-        section: _SettingsSection.editPrompts,
-      ),
-      (
-        label: 'タイトル付け',
-        icon: Icons.smart_toy_outlined,
-        section: _SettingsSection.titlePrompts,
-      ),
-      (
-        label: 'AIチャット文面',
-        icon: Icons.chat_bubble_outline,
-        section: _SettingsSection.chatPrompts,
-      ),
-    ];
-
     return SizedBox(
       width: 208,
       child: PattoSurface(
@@ -900,7 +901,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 style: Theme.of(context).textTheme.titleSmall,
               ),
             ),
-            for (final item in items)
+            for (final item in _sectionNavItems)
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: FilledButton.tonalIcon(
@@ -919,6 +920,50 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileNavDrawer(BuildContext context) {
+    return Drawer(
+      child: SafeArea(
+        bottom: false,
+        child: ColoredBox(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          child: ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 6, 10, 12),
+                child: Text(
+                  '設定メニュー',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              for (final item in _sectionNavItems)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: FilledButton.tonalIcon(
+                    style: FilledButton.styleFrom(
+                      alignment: Alignment.centerLeft,
+                      backgroundColor: _selectedSection == item.section
+                          ? Theme.of(context).colorScheme.primaryContainer
+                          : Theme.of(context).colorScheme.surface,
+                      foregroundColor: _selectedSection == item.section
+                          ? Theme.of(context).colorScheme.onPrimaryContainer
+                          : Theme.of(context).colorScheme.onSurface,
+                    ),
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      unawaited(_jumpToSection(item.section));
+                    },
+                    icon: Icon(item.icon, size: 18),
+                    label: Text(item.label),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -1650,6 +1695,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         : scrollableContent;
 
     return Scaffold(
+      drawer: isWide ? null : _buildMobileNavDrawer(context),
       appBar: AppBar(title: const Text('設定')),
       body: bodyContent,
     );
