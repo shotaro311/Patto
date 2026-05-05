@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>御請求書 202602_01</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+      font-size: 14px;
+      color: #333;
+      padding: 40px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 30px;
+    }
+    .header-left h2 {
+      font-size: 18px;
+      font-weight: normal;
+      margin-bottom: 10px;
+    }
+    .header-left p {
+      font-size: 13px;
+      color: #666;
+    }
+    .header-right {
+      text-align: right;
+    }
+    .header-right h1 {
+      font-size: 28px;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .header-right p {
+      font-size: 12px;
+      color: #666;
+    }
+    .info-section {
+      display: flex;
+      gap: 40px;
+      margin-bottom: 30px;
+    }
+    .amount-box {
+      background: #f8f8f8;
+      border-left: 4px solid #1a2a3a;
+      padding: 20px 30px;
+      min-width: 200px;
+    }
+    .amount-box .label {
+      font-size: 13px;
+      color: #c44;
+      margin-bottom: 5px;
+    }
+    .amount-box .value {
+      font-size: 32px;
+      font-weight: bold;
+      color: #1a2a3a;
+    }
+    .sender-info {
+      padding: 20px;
+    }
+    .sender-info h3 {
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .sender-info p {
+      font-size: 12px;
+      color: #666;
+      line-height: 1.6;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 30px;
+    }
+    table thead {
+      background: #1a2a3a;
+      color: white;
+    }
+    table th {
+      padding: 12px 15px;
+      text-align: left;
+      font-weight: normal;
+      font-size: 13px;
+    }
+    table th:nth-child(2),
+    table th:nth-child(3),
+    table th:nth-child(4) {
+      text-align: right;
+    }
+    table td {
+      padding: 15px;
+      border-bottom: 1px solid #eee;
+    }
+    table td:nth-child(2),
+    table td:nth-child(3),
+    table td:nth-child(4) {
+      text-align: right;
+    }
+    .summary-row td {
+      border-bottom: none;
+      padding: 8px 15px;
+    }
+    .summary-row td:first-child {
+      text-align: right;
+      color: #666;
+    }
+    .total-row {
+      background: #1a2a3a;
+      color: white;
+    }
+    .total-row td {
+      padding: 15px;
+      font-weight: bold;
+    }
+    .total-row td:last-child {
+      font-size: 20px;
+      color: white;
+    }
+    .footer-section {
+      display: flex;
+      gap: 60px;
+      margin-top: 30px;
+    }
+    .bank-info, .notes {
+      flex: 1;
+    }
+    .bank-info h4, .notes h4 {
+      font-size: 14px;
+      font-weight: bold;
+      margin-bottom: 15px;
+      padding-bottom: 5px;
+      border-bottom: 2px solid #1a2a3a;
+    }
+    .bank-details {
+      background: #f8f8f8;
+      padding: 15px;
+      font-size: 13px;
+      line-height: 1.8;
+    }
+    .notes p {
+      font-size: 13px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <h2>株式会社プラセム 御中</h2>
+      <p>下記の通りご請求申し上げます。</p>
+    </div>
+    <div class="header-right">
+      <h1>御請求書</h1>
+      <p>発行日: 2026-02-02</p>
+      <p>請求書番号: 202602_01</p>
+    </div>
+  </div>
+
+  <div class="info-section">
+    <div class="amount-box">
+      <div class="label">ご請求額</div>
+      <div class="value">¥70,000</div>
+    </div>
+    <div class="sender-info">
+      <h3>松本翔太郎</h3>
+      <p>福岡県福岡市博多区博多駅南4丁目3-30レジデンスカーブ博多206号室</p>
+      <p>TEL: 09012816308</p>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>品名</th>
+        <th>数量</th>
+        <th>単価</th>
+        <th>金額</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>システム開発費</td>
+        <td>1</td>
+        <td>¥63,637</td>
+        <td>¥63,637</td>
+      </tr>
+      <tr class="summary-row">
+        <td colspan="3">単価合計</td>
+        <td>¥63,637</td>
+      </tr>
+      <tr class="summary-row">
+        <td colspan="3">消費税 (10%)</td>
+        <td>¥6,363</td>
+      </tr>
+      <tr class="total-row">
+        <td colspan="3">合計金額</td>
+        <td>¥70,000</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="footer-section">
+    <div class="bank-info">
+      <h4>お振込先</h4>
+      <div class="bank-details">
+        銀行名：楽天銀行 (0036)<br>
+        支店名：ギター支店 (226)<br>
+        口座種別：普通<br>
+        口座番号：2329944<br>
+        口座名義：マツモト ショウタロウ
+      </div>
+    </div>
+    <div class="notes">
+      <h4>備考</h4>
+      <p>メール自動整理ツールの開発。</p>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "slot": "05_swift_stroke_p",
+  "file": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2/05_swift_stroke_p_01.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "requested_size": "1024x1024",
+  "size": {
+    "width": 1024,
+    "height": 1024,
+    "aspect_ratio": "1:1",
+    "image_size": "1K"
+  },
+  "prompt_source": "prompt_json",
+  "prompt_json": {
+    "subject": "Patto の高品質アプリアイコン。P を連想させる一筆書きストローク。メモを素早く書き留めた勢いが感じられる。ロゴ感は強すぎず、アプリとして自然な見え方。",
+    "composition": "1:1。中央に太めの流れる一本線モチーフ。書き始めと抜きに速度感。背景は整理され、全体は非常にミニマル。",
+    "style": "Apple系の洗練されたアプリアイコン。Bear や Day One のような上質な文具感。シンプルだが記憶に残る。",
+    "color_palette": "オフホワイト背景、ディープエメラルドまたはインクブラックのストローク、補助にサンドベージュ。紫は使わない。",
+    "constraints": [
+      "タイポグラフィ感はあるが露骨なロゴにしない",
+      "スピード感を含める",
+      "可愛さは丸みで出す",
+      "文字は描かない"
+    ]
+  },
+  "compiled_prompt": "Patto の高品質アプリアイコン。P を連想させる一筆書きストローク。メモを素早く書き留めた勢いが感じられる。ロゴ感は強すぎず、アプリとして自然な見え方。\ncomposition: 1:1。中央に太めの流れる一本線モチーフ。書き始めと抜きに速度感。背景は整理され、全体は非常にミニマル。\nstyle: Apple系の洗練されたアプリアイコン。Bear や Day One のような上質な文具感。シンプルだが記憶に残る。\nconstraints: タイポグラフィ感はあるが露骨なロゴにしない, スピード感を含める, 可愛さは丸みで出す, 文字は描かない\ncolor_palette: オフホワイト背景、ディープエメラルドまたはインクブラックのストローク、補助にサンドベージュ。紫は使わない。",
+  "sourceSkill": "generate-image"
+}

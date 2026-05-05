@@ -1,0 +1,26 @@
+{
+  "slot": "03_clipboard_pet",
+  "file": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated/03_clipboard_pet_01.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "requested_size": "1024x1024",
+  "size": {
+    "width": 1024,
+    "height": 1024,
+    "aspect_ratio": "1:1",
+    "image_size": "1K"
+  },
+  "prompt_source": "prompt_json",
+  "prompt_json": {
+    "subject": "Patto のプロ品質アプリアイコン。小さなクリップボードが可愛いマスコットのように見える案。メモボードの上部クリップが特徴で、目は控えめに愛嬌を出す。",
+    "composition": "1:1、中央配置、明快な単体シルエット。上部のクリップ形状が一目で分かる。情報量は少なく、完成アイコンとしてまとまっていること。",
+    "style": "モダンで洗練された、少しだけキャラクター性のあるアプリアイコン。上品な3Dフラットミックス。プロ仕様。",
+    "color_palette": "オフホワイト、セージグリーン、淡いオレンジベージュ。紫は使わない。",
+    "constraints": [
+      "ごちゃごちゃさせない",
+      "目立つのはクリップボードの形",
+      "メモアプリ感を維持する"
+    ]
+  },
+  "compiled_prompt": "Patto のプロ品質アプリアイコン。小さなクリップボードが可愛いマスコットのように見える案。メモボードの上部クリップが特徴で、目は控えめに愛嬌を出す。\ncomposition: 1:1、中央配置、明快な単体シルエット。上部のクリップ形状が一目で分かる。情報量は少なく、完成アイコンとしてまとまっていること。\nstyle: モダンで洗練された、少しだけキャラクター性のあるアプリアイコン。上品な3Dフラットミックス。プロ仕様。\nconstraints: ごちゃごちゃさせない, 目立つのはクリップボードの形, メモアプリ感を維持する\ncolor_palette: オフホワイト、セージグリーン、淡いオレンジベージュ。紫は使わない。",
+  "sourceSkill": "generate-image"
+}

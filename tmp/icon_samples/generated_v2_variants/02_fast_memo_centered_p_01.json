@@ -1,0 +1,8 @@
+{
+  "slot": "02_fast_memo_centered_p",
+  "file": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2_variants/02_fast_memo_centered_p_01.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "referenceImagePath": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2/02_fast_memo_card_01.jpg",
+  "prompt": "Use the attached app icon image as the reference and preserve the overall composition as much as possible.\nKeep the same pastel mint rounded-square background, the same flying memo card angle, the same soft shadow, and exactly three speed lines on the right side.\nRemove the small unclear text near the top-left of the memo.\nInstead, place one large elegant capital letter \"P\" in the center of the memo card.\nThe P should be highly legible, premium, Apple-like, softly embossed or gently raised from the paper, refined and minimal.\nDo not add any other letters or words.\nDo not change the color family. No purple.\nKeep the icon cute, fast, polished, and suitable for the App Store.",
+  "source": "reference_edit"
+}

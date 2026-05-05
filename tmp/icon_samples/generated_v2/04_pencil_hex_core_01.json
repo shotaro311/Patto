@@ -1,0 +1,27 @@
+{
+  "slot": "04_pencil_hex_core",
+  "file": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2/04_pencil_hex_core_01.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "requested_size": "1024x1024",
+  "size": {
+    "width": 1024,
+    "height": 1024,
+    "aspect_ratio": "1:1",
+    "image_size": "1K"
+  },
+  "prompt_source": "prompt_json",
+  "prompt_json": {
+    "subject": "Patto の高品質アプリアイコン。鉛筆を真上から見た六角形断面を抽象化したデザイン。中央に芯があり、書く道具そのものを象徴する。",
+    "composition": "1:1。中央に大きな六角形、中心に小さな芯。極めてミニマルで幾何学的。角はやわらかく、背景はシンプル。",
+    "style": "Appleっぽい精密で抽象的なアプリアイコン。高級感、静けさ、クリーンさ。過剰な装飾なし。",
+    "color_palette": "ウォームイエロー、グラファイト、アイボリー。紫は使わない。",
+    "constraints": [
+      "抽象的でも美しく成立すること",
+      "工業製品っぽくしすぎない",
+      "柔らかさを残す",
+      "文字は入れない"
+    ]
+  },
+  "compiled_prompt": "Patto の高品質アプリアイコン。鉛筆を真上から見た六角形断面を抽象化したデザイン。中央に芯があり、書く道具そのものを象徴する。\ncomposition: 1:1。中央に大きな六角形、中心に小さな芯。極めてミニマルで幾何学的。角はやわらかく、背景はシンプル。\nstyle: Appleっぽい精密で抽象的なアプリアイコン。高級感、静けさ、クリーンさ。過剰な装飾なし。\nconstraints: 抽象的でも美しく成立すること, 工業製品っぽくしすぎない, 柔らかさを残す, 文字は入れない\ncolor_palette: ウォームイエロー、グラファイト、アイボリー。紫は使わない。",
+  "sourceSkill": "generate-image"
+}
