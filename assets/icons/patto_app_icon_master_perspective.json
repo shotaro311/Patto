@@ -1,0 +1,9 @@
+{
+  "slot": "patto_app_icon_master_perspective",
+  "file": "/Users/shotaro/code/shared/Patto/assets/icons/patto_app_icon_master_perspective.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "fullBleedReferencePath": "/Users/shotaro/code/shared/Patto/assets/icons/patto_app_icon_master.png",
+  "perspectiveReferencePath": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2_variants_contrast/02_fast_memo_centered_p_contrast_01.jpg",
+  "prompt": "You will receive two reference images.\nUse the first reference image for the full-bleed app icon composition, mint background treatment, centered P memo concept, and overall Apple-like premium softness.\nUse the second reference image only as the reference for the memo card's perspective tilt and depth feeling.\nCreate one production-ready iOS/macOS app icon master.\nKeep the icon as a true full-bleed app icon with no inner rounded-square panel and no icon-inside-icon look.\nKeep the mint background, one memo card, centered P, folded corner, and exactly three speed lines on the right.\nMake the memo card larger, occupying about 72 to 76 percent of the canvas width while staying fully visible.\nImportant: the memo card must have real perspective depth, not just a flat rotation. It should feel like the lower-left area is slightly closer to the viewer and the upper-right area is slightly farther away, with clear foreshortening and subtle thickness.\nThe card should look like it is flying diagonally with depth, similar to the second reference image, not facing front.\nKeep it elegant, minimal, soft, and highly legible. No extra text, no purple, no extra symbols, no harsh contrast.",
+  "source": "final_app_icon_perspective_edit"
+}

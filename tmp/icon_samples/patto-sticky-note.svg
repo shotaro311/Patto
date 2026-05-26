@@ -1,0 +1,25 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="shadow" x="120" y="120" width="784" height="784" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#B8AA84" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="236" fill="#F5F2E9"/>
+  <g filter="url(#shadow)">
+    <path d="M218 206C218 160.712 254.712 124 300 124H724C769.288 124 806 160.712 806 206V546L666 706H300C254.712 706 218 669.288 218 624V206Z" fill="#F6E59B"/>
+    <path d="M666 706V600C666 569.072 691.072 544 722 544H806L666 706Z" fill="#EBCB73"/>
+    <path d="M300 124H724C769.288 124 806 160.712 806 206V546L666 706H300C254.712 706 218 669.288 218 624V206C218 160.712 254.712 124 300 124Z" stroke="#D4C48E" stroke-width="10"/>
+    <g stroke="#C9B36A" stroke-width="16" stroke-linecap="round">
+      <line x1="332" y1="302" x2="614" y2="302"/>
+      <line x1="332" y1="376" x2="594" y2="376"/>
+      <line x1="332" y1="450" x2="544" y2="450"/>
+    </g>
+    <g>
+      <circle cx="382" cy="554" r="16" fill="#6D5D3D"/>
+      <circle cx="458" cy="554" r="16" fill="#6D5D3D"/>
+      <path d="M364 610C387 631 429 631 452 610" stroke="#6D5D3D" stroke-width="12" stroke-linecap="round"/>
+      <circle cx="346" cy="586" r="10" fill="#F1C2B4" fill-opacity="0.75"/>
+      <circle cx="490" cy="586" r="10" fill="#F1C2B4" fill-opacity="0.75"/>
+    </g>
+  </g>
+</svg>

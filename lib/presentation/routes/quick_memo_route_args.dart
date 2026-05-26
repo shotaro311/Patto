@@ -1,10 +1,5 @@
 class QuickMemoRouteArgs {
-  const QuickMemoRouteArgs({
-    this.showDraftActionSheetOnOpen = false,
-    this.useMorph = false,
-  });
+  const QuickMemoRouteArgs({this.useMorph = false});
 
-  final bool showDraftActionSheetOnOpen;
   final bool useMorph;
 }
-

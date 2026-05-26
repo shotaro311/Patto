@@ -5,6 +5,7 @@ import '../../data/repositories/tag_dictionary_repository.dart';
 import '../providers/tag_dictionary_repository_provider.dart';
 import '../providers/tag_summaries_provider.dart';
 import '../widgets/app_input_decoration.dart';
+import '../widgets/patto_surface.dart';
 
 class TagManagerScreen extends ConsumerWidget {
   const TagManagerScreen({super.key});
@@ -15,22 +16,28 @@ class TagManagerScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(title: const Text('タグ管理')),
-      body: summariesAsync.when(
-        data: (summaries) {
-          if (summaries.isEmpty) {
-            return const Center(child: Text('タグがありません'));
-          }
-          return ListView.separated(
-            itemCount: summaries.length,
-            separatorBuilder: (context, index) => const Divider(height: 1),
-            itemBuilder: (context, index) {
-              final summary = summaries[index];
-              return _TagSummaryTile(summary: summary);
-            },
-          );
-        },
-        error: (e, _) => Center(child: Text('エラー: $e')),
-        loading: () => const Center(child: CircularProgressIndicator()),
+      body: ColoredBox(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: summariesAsync.when(
+          data: (summaries) {
+            if (summaries.isEmpty) {
+              return const Center(child: Text('タグがありません'));
+            }
+            return ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: summaries.length,
+              itemBuilder: (context, index) {
+                final summary = summaries[index];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _TagSummaryTile(summary: summary),
+                );
+              },
+            );
+          },
+          error: (e, _) => Center(child: Text('エラー: $e')),
+          loading: () => const Center(child: CircularProgressIndicator()),
+        ),
       ),
     );
   }
@@ -139,18 +146,45 @@ class _TagSummaryTile extends ConsumerWidget {
     final label = '#${summary.tag}';
     final countText = '${summary.noteCount}件';
 
-    return ListTile(
-      title: Text(label),
-      subtitle: Text(countText),
-      trailing: PopupMenuButton<_TagMenuAction>(
-        onSelected: (action) => _handleAction(context, ref, action),
-        itemBuilder: (context) => const [
-          PopupMenuItem(value: _TagMenuAction.rename, child: Text('名前を変更')),
-          PopupMenuItem(value: _TagMenuAction.delete, child: Text('削除')),
-        ],
-        icon: const Icon(Icons.more_vert),
-      ),
+    return PattoSurface(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      muted: true,
       onTap: () => _renameTag(context, ref),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(
+              Icons.sell_rounded,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 4),
+                Text(countText, style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+          ),
+          PopupMenuButton<_TagMenuAction>(
+            onSelected: (action) => _handleAction(context, ref, action),
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: _TagMenuAction.rename, child: Text('名前を変更')),
+              PopupMenuItem(value: _TagMenuAction.delete, child: Text('削除')),
+            ],
+            icon: const Icon(Icons.more_horiz_rounded),
+          ),
+        ],
+      ),
     );
   }
 }

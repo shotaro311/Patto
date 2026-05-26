@@ -1,0 +1,8 @@
+{
+  "slot": "02_fast_memo_raised_pat",
+  "file": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2_variants/02_fast_memo_raised_pat_01.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "referenceImagePath": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2/02_fast_memo_card_01.jpg",
+  "prompt": "Use the attached app icon image as the reference and preserve the overall composition as much as possible.\nKeep the same pastel mint rounded-square background, the same flying memo card angle, the same soft shadow, and exactly three speed lines on the right side.\nKeep a small title mark reading \"PAT\" in the same upper-left area of the memo card.\nMake the PAT lettering much clearer, more readable, and softly embossed so it stands out from the paper.\nKeep the lettering elegant, subtle, and premium rather than loud.\nDo not add any other text.\nDo not change the main layout or color family. No purple.\nKeep the icon Apple-like, fast, and clean.",
+  "source": "reference_edit"
+}

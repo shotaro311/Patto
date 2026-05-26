@@ -129,14 +129,16 @@ class QuickMemoController extends StateNotifier<QuickMemoState> {
     });
   }
 
-  Future<Note?> ensureDraftExists() async {
+  Future<Note?> ensureDraftExists({bool allowEmpty = false}) async {
     final id = state.currentDraftId;
     if (id != null) {
       return _ref.read(noteRepositoryProvider).getNote(id);
     }
     final text = state.content.trim();
-    if (text.isEmpty) return null;
-    final created = await _ref.read(noteRepositoryProvider).createDraft(initialContent: text);
+    if (text.isEmpty && !allowEmpty) return null;
+    final created = await _ref
+        .read(noteRepositoryProvider)
+        .createDraft(initialContent: state.content);
     await _ref.read(noteRepositoryProvider).autoArchiveDrafts(
           maxDrafts: NoteRepository.defaultMaxDrafts,
         );

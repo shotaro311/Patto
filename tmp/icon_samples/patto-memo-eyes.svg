@@ -1,0 +1,33 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="shadow" x="120" y="120" width="784" height="784" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#A7B7AC" flood-opacity="0.24"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="236" fill="#F5F2E9"/>
+  <g filter="url(#shadow)">
+    <rect x="196" y="154" width="632" height="716" rx="132" fill="#FFFDF7" stroke="#D7DED5" stroke-width="10"/>
+    <rect x="196" y="154" width="632" height="132" rx="132" fill="#DCEEE1"/>
+    <g fill="#7FAE98">
+      <rect x="292" y="126" width="32" height="84" rx="16"/>
+      <rect x="396" y="126" width="32" height="84" rx="16"/>
+      <rect x="500" y="126" width="32" height="84" rx="16"/>
+      <rect x="604" y="126" width="32" height="84" rx="16"/>
+      <rect x="708" y="126" width="32" height="84" rx="16"/>
+    </g>
+    <g>
+      <ellipse cx="430" cy="484" rx="86" ry="96" fill="white"/>
+      <ellipse cx="594" cy="484" rx="86" ry="96" fill="white"/>
+      <ellipse cx="460" cy="500" rx="32" ry="38" fill="#2F3A33"/>
+      <ellipse cx="624" cy="500" rx="32" ry="38" fill="#2F3A33"/>
+      <circle cx="474" cy="486" r="10" fill="white"/>
+      <circle cx="638" cy="486" r="10" fill="white"/>
+    </g>
+    <g stroke="#DCE6DD" stroke-width="14" stroke-linecap="round">
+      <line x1="324" y1="654" x2="700" y2="654"/>
+      <line x1="324" y1="720" x2="660" y2="720"/>
+      <line x1="324" y1="786" x2="620" y2="786"/>
+    </g>
+    <path d="M733 183L796 246" stroke="#B8CBBE" stroke-width="12" stroke-linecap="round"/>
+  </g>
+</svg>

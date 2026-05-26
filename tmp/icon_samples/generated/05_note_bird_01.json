@@ -1,0 +1,26 @@
+{
+  "slot": "05_note_bird",
+  "file": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated/05_note_bird_01.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "requested_size": "1024x1024",
+  "size": {
+    "width": 1024,
+    "height": 1024,
+    "aspect_ratio": "1:1",
+    "image_size": "1K"
+  },
+  "prompt_source": "prompt_json",
+  "prompt_json": {
+    "subject": "Patto のプロ品質アプリアイコン。丸くて可愛い小鳥が小さなメモパッドを大切そうに抱えている。可愛さがありつつ、アプリの品位を保つ。",
+    "composition": "1:1アイコン。中央に単体で大きく。鳥とメモの関係が一目で分かる、単純化されたシルエット。App Store で映える整理された構図。",
+    "style": "日本のかわいい感と、Apple系アプリアイコンの洗練を両立した高品質デザイン。ディテールは抑えめ、輪郭は明快。",
+    "color_palette": "淡いアクア、クリーム、やさしいイエロー、少量のピーチ。紫は使わない。",
+    "constraints": [
+      "鳥が主役になりすぎない",
+      "メモアプリと分かる要素を残す",
+      "背景はシンプルにする"
+    ]
+  },
+  "compiled_prompt": "Patto のプロ品質アプリアイコン。丸くて可愛い小鳥が小さなメモパッドを大切そうに抱えている。可愛さがありつつ、アプリの品位を保つ。\ncomposition: 1:1アイコン。中央に単体で大きく。鳥とメモの関係が一目で分かる、単純化されたシルエット。App Store で映える整理された構図。\nstyle: 日本のかわいい感と、Apple系アプリアイコンの洗練を両立した高品質デザイン。ディテールは抑えめ、輪郭は明快。\nconstraints: 鳥が主役になりすぎない, メモアプリと分かる要素を残す, 背景はシンプルにする\ncolor_palette: 淡いアクア、クリーム、やさしいイエロー、少量のピーチ。紫は使わない。",
+  "sourceSkill": "generate-image"
+}

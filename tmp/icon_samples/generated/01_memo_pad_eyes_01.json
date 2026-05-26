@@ -1,0 +1,27 @@
+{
+  "slot": "01_memo_pad_eyes",
+  "file": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated/01_memo_pad_eyes_01.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "requested_size": "1024x1024",
+  "size": {
+    "width": 1024,
+    "height": 1024,
+    "aspect_ratio": "1:1",
+    "image_size": "1K"
+  },
+  "prompt_source": "prompt_json",
+  "prompt_json": {
+    "subject": "Patto というメモアプリのプロ品質アプリアイコン。縦長の小さなメモパッドがキャラクター化され、目だけがキョロッとしている。pad memo を連想できることが最重要。",
+    "composition": "iOSアプリアイコン前提の1:1。中央に大きく単体配置。小サイズでも視認できる、単純で強いシルエット。背景込みで完成したアイコン。余計な装飾や文字は入れない。",
+    "style": "プロのプロダクトデザイナーが作る、洗練された日本のかわいいアプリアイコン。ミニマル、上品、少しだけ立体感、子供っぽすぎない。App Store で映える完成度。",
+    "color_palette": "やわらかいクリーム、ミント、淡いセージ、少量のピーチ。紫は使わない。",
+    "constraints": [
+      "文字、ロゴ、透かし、複雑な背景を入れない",
+      "シルエットがはっきり見えること",
+      "かわいいが幼稚すぎないこと",
+      "メモ帳らしさが一目で伝わること"
+    ]
+  },
+  "compiled_prompt": "Patto というメモアプリのプロ品質アプリアイコン。縦長の小さなメモパッドがキャラクター化され、目だけがキョロッとしている。pad memo を連想できることが最重要。\ncomposition: iOSアプリアイコン前提の1:1。中央に大きく単体配置。小サイズでも視認できる、単純で強いシルエット。背景込みで完成したアイコン。余計な装飾や文字は入れない。\nstyle: プロのプロダクトデザイナーが作る、洗練された日本のかわいいアプリアイコン。ミニマル、上品、少しだけ立体感、子供っぽすぎない。App Store で映える完成度。\nconstraints: 文字、ロゴ、透かし、複雑な背景を入れない, シルエットがはっきり見えること, かわいいが幼稚すぎないこと, メモ帳らしさが一目で伝わること\ncolor_palette: やわらかいクリーム、ミント、淡いセージ、少量のピーチ。紫は使わない。",
+  "sourceSkill": "generate-image"
+}

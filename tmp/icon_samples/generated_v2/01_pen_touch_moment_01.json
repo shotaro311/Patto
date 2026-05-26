@@ -1,0 +1,27 @@
+{
+  "slot": "01_pen_touch_moment",
+  "file": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2/01_pen_touch_moment_01.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "requested_size": "1024x1024",
+  "size": {
+    "width": 1024,
+    "height": 1024,
+    "aspect_ratio": "1:1",
+    "image_size": "1K"
+  },
+  "prompt_source": "prompt_json",
+  "prompt_json": {
+    "subject": "Patto の高品質アプリアイコン。丸角の小さなメモカードに、ペン先が触れた瞬間を切り取ったミニマルなデザイン。書き始めの0.1秒を感じる。",
+    "composition": "1:1のiOSアプリアイコン。中央に白いメモカード、その一角に上品なペン先。接点からごく薄い波紋が2本だけ広がる。余白は広く、主役は一つ。",
+    "style": "Apple純正アプリのような上質で静かなデザイン。プロダクトデザイン品質。繊細な立体感、上品な光、過度な装飾なし。かわいさは丸みで出す。",
+    "color_palette": "深いネイビーまたは落ち着いたミッドナイト背景、ホワイトカード、ペン先に淡いシャンパンゴールド。紫は使わない。",
+    "constraints": [
+      "顔やキャラクターは入れない",
+      "文字やロゴは入れない",
+      "シンプルで高級感があること",
+      "小サイズでも判別できること"
+    ]
+  },
+  "compiled_prompt": "Patto の高品質アプリアイコン。丸角の小さなメモカードに、ペン先が触れた瞬間を切り取ったミニマルなデザイン。書き始めの0.1秒を感じる。\ncomposition: 1:1のiOSアプリアイコン。中央に白いメモカード、その一角に上品なペン先。接点からごく薄い波紋が2本だけ広がる。余白は広く、主役は一つ。\nstyle: Apple純正アプリのような上質で静かなデザイン。プロダクトデザイン品質。繊細な立体感、上品な光、過度な装飾なし。かわいさは丸みで出す。\nconstraints: 顔やキャラクターは入れない, 文字やロゴは入れない, シンプルで高級感があること, 小サイズでも判別できること\ncolor_palette: 深いネイビーまたは落ち着いたミッドナイト背景、ホワイトカード、ペン先に淡いシャンパンゴールド。紫は使わない。",
+  "sourceSkill": "generate-image"
+}

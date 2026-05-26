@@ -1,0 +1,8 @@
+{
+  "slot": "02_fast_memo_raised_pat_contrast",
+  "file": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2_variants_contrast/02_fast_memo_raised_pat_contrast_01.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "referenceImagePath": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2_variants/02_fast_memo_raised_pat_01.jpg",
+  "prompt": "Use the attached app icon as the reference and keep the exact same composition.\nDo not redesign the icon. Keep the same mint rounded-square background, the same memo card angle, the same three speed lines, and the same PAT lettering in the upper-left area.\nCreate a slightly higher-contrast version.\nMake the PAT lettering more readable and more clearly embossed, with a bit more depth and separation from the paper.\nAlso make the memo card edges, fold corner, and speed lines slightly clearer.\nKeep it elegant, soft, Apple-like, and premium. Do not make it harsh or over-processed.\nNo new text, no purple, no extra elements.",
+  "source": "reference_edit_high_contrast"
+}

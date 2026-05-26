@@ -1,0 +1,26 @@
+{
+  "slot": "04_p_symbol_pad",
+  "file": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated/04_p_symbol_pad_01.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "requested_size": "1024x1024",
+  "size": {
+    "width": 1024,
+    "height": 1024,
+    "aspect_ratio": "1:1",
+    "image_size": "1K"
+  },
+  "prompt_source": "prompt_json",
+  "prompt_json": {
+    "subject": "Patto の P を連想させる、丸みのあるメモパッドアイコン。P のニュアンスは感じるが、露骨な文字ロゴではなく、自然にメモツールの形へ溶け込んでいる。",
+    "composition": "1:1、中央に大きく、ひと目で覚えられるユニークなシルエット。小サイズでも判別しやすい。",
+    "style": "ブランド感のあるプロ品質アプリアイコン。ミニマル、可愛い、タイポグラフィ感を少し含む。高級感のあるシンプルさ。",
+    "color_palette": "コーラル、クリーム、淡いサンドベージュ。紫は使わない。",
+    "constraints": [
+      "文字そのものには見せすぎない",
+      "メモアプリらしさを失わない",
+      "複雑なディテールを入れない"
+    ]
+  },
+  "compiled_prompt": "Patto の P を連想させる、丸みのあるメモパッドアイコン。P のニュアンスは感じるが、露骨な文字ロゴではなく、自然にメモツールの形へ溶け込んでいる。\ncomposition: 1:1、中央に大きく、ひと目で覚えられるユニークなシルエット。小サイズでも判別しやすい。\nstyle: ブランド感のあるプロ品質アプリアイコン。ミニマル、可愛い、タイポグラフィ感を少し含む。高級感のあるシンプルさ。\nconstraints: 文字そのものには見せすぎない, メモアプリらしさを失わない, 複雑なディテールを入れない\ncolor_palette: コーラル、クリーム、淡いサンドベージュ。紫は使わない。",
+  "sourceSkill": "generate-image"
+}

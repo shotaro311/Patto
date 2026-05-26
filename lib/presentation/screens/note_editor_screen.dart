@@ -10,9 +10,7 @@ class NoteEditorScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(),
-      body: NoteEditorPane(noteId: noteId),
+      body: SafeArea(child: NoteEditorPane(noteId: noteId)),
     );
   }
 }
-

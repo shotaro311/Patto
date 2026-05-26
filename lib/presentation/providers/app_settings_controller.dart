@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/config/env.dart';
 import '../../core/providers.dart';
 import '../../domain/app_settings.dart';
 
@@ -11,17 +12,15 @@ final uuidProvider = Provider<Uuid>((ref) => const Uuid());
 
 final appSettingsProvider =
     StateNotifierProvider<AppSettingsController, AppSettings>((ref) {
-  final prefs = ref.watch(sharedPreferencesProvider);
-  final uuid = ref.watch(uuidProvider);
-  return AppSettingsController(prefs: prefs, uuid: uuid);
-});
+      final prefs = ref.watch(sharedPreferencesProvider);
+      final uuid = ref.watch(uuidProvider);
+      return AppSettingsController(prefs: prefs, uuid: uuid);
+    });
 
 class AppSettingsController extends StateNotifier<AppSettings> {
-  AppSettingsController({
-    required SharedPreferences prefs,
-    required Uuid uuid,
-  })  : _prefs = prefs,
-        super(_load(prefs: prefs, uuid: uuid));
+  AppSettingsController({required SharedPreferences prefs, required Uuid uuid})
+    : _prefs = prefs,
+      super(_load(prefs: prefs, uuid: uuid));
 
   final SharedPreferences _prefs;
 
@@ -34,6 +33,8 @@ class AppSettingsController extends StateNotifier<AppSettings> {
 
     return AppSettings(
       clientId: clientId,
+      themeStyle: AppThemeStyleCodec.fromString(prefs.getString(_kThemeStyle)),
+      darkModeEnabled: prefs.getBool(_kDarkModeEnabled) ?? false,
       syncEnabled: prefs.getBool(_kSyncEnabled) ?? false,
       quickLaunchOpenMode: QuickLaunchOpenModeCodec.fromString(
         prefs.getString(_kQuickLaunchOpenMode),
@@ -51,20 +52,44 @@ class AppSettingsController extends StateNotifier<AppSettings> {
           prefs.getBool(_kAiAppleIntelligenceEnabled) ?? false,
       aiExternalApiEnabled:
           prefs.getBool(_kAiExternalApiEnabled) ??
-              prefs.getBool(_kAiEnabled) ??
-              false,
-      aiPreviewEnabled: prefs.getBool(_kAiPreviewEnabled) ?? true,
-      aiEditKeyBinding: _readKeyBinding(
-        prefs.getString(_kAiEditKeyBinding),
+          prefs.getBool(_kAiEnabled) ??
+          false,
+      aiExternalProvider: AiExternalProviderCodec.fromString(
+        prefs.getString(_kAiExternalProvider),
       ),
+      aiExternalBaseUrl:
+          prefs.getString(_kAiExternalBaseUrl) ?? _defaultAiExternalBaseUrl,
+      aiExternalModel: prefs.getString(_kAiExternalModel) ?? Env.aiModelName,
+      aiPreviewEnabled: prefs.getBool(_kAiPreviewEnabled) ?? true,
+      aiEditKeyBinding: _readKeyBinding(prefs.getString(_kAiEditKeyBinding)),
       aiPromptSendKey: AiPromptSendKeyCodec.fromString(
         prefs.getString(_kAiPromptSendKey),
       ),
       aiPromptPresets: _readAiPresets(prefs.getString(_kAiPromptPresets)),
+      aiTitleRules: _readAiTitleRules(prefs.getString(_kAiTitleRules)),
+      aiChatSystemPrompts: _readAiChatSystemPrompts(
+        prefs.getString(_kAiChatSystemPrompts),
+      ),
+      aiChatContextWindowSize: _readAiChatContextWindowSize(prefs),
+      aiImageSendLimit: _readAiImageSendLimit(prefs),
       lastOpenedNoteId: prefs.getString(_kLastOpenedNoteId),
       lastSyncAt: _readDateTime(prefs, _kLastSyncAt),
     );
   }
+
+  static int _readAiImageSendLimit(SharedPreferences prefs) {
+    final raw = prefs.getInt(_kAiImageSendLimit);
+    if (raw == null || raw < 1) return 3;
+    return raw;
+  }
+
+  static int _readAiChatContextWindowSize(SharedPreferences prefs) {
+    final raw = prefs.getInt(_kAiChatContextWindowSize);
+    if (raw == null || raw < 4092) return 8192;
+    return raw;
+  }
+
+  static const _defaultAiExternalBaseUrl = 'http://127.0.0.1:1234/v1';
 
   static DateTime? _readDateTime(SharedPreferences prefs, String key) {
     final raw = prefs.getString(key);
@@ -120,6 +145,26 @@ class AppSettingsController extends StateNotifier<AppSettings> {
     ];
   }
 
+  static List<AiTitleRule> _defaultAiTitleRules() {
+    return const [
+      AiTitleRule(name: '簡潔', prompt: '本文の要点をつかみ、20文字以内の日本語タイトルを1つだけ付けてください。'),
+      AiTitleRule(name: '', prompt: ''),
+      AiTitleRule(name: '', prompt: ''),
+    ];
+  }
+
+  static List<AiChatSystemPrompt> _defaultAiChatSystemPrompts() {
+    return const [
+      AiChatSystemPrompt(
+        name: '標準',
+        prompt:
+            'あなたはメモ編集を支援するAIチャットです。ユーザーの指示に沿って、日本語で簡潔に返してください。必要なら本文に反映しやすい完成文を優先してください。',
+      ),
+      AiChatSystemPrompt(name: '', prompt: ''),
+      AiChatSystemPrompt(name: '', prompt: ''),
+    ];
+  }
+
   static List<AiPromptPreset> _readAiPresets(String? raw) {
     if (raw == null || raw.isEmpty) return _defaultAiPresets();
     try {
@@ -142,9 +187,63 @@ class AppSettingsController extends StateNotifier<AppSettings> {
     }
   }
 
+  static List<AiTitleRule> _readAiTitleRules(String? raw) {
+    if (raw == null || raw.isEmpty) return _defaultAiTitleRules();
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return _defaultAiTitleRules();
+      final rules = decoded
+          .map((item) => AiTitleRule.fromMap(item))
+          .whereType<AiTitleRule>()
+          .toList();
+      if (rules.isEmpty) return _defaultAiTitleRules();
+      while (rules.length < 3) {
+        rules.add(const AiTitleRule(name: '', prompt: ''));
+      }
+      if (rules.length > 3) {
+        return rules.take(3).toList();
+      }
+      return rules;
+    } catch (_) {
+      return _defaultAiTitleRules();
+    }
+  }
+
+  static List<AiChatSystemPrompt> _readAiChatSystemPrompts(String? raw) {
+    if (raw == null || raw.isEmpty) return _defaultAiChatSystemPrompts();
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return _defaultAiChatSystemPrompts();
+      final prompts = decoded
+          .map((item) => AiChatSystemPrompt.fromMap(item))
+          .whereType<AiChatSystemPrompt>()
+          .toList();
+      if (prompts.isEmpty) return _defaultAiChatSystemPrompts();
+      while (prompts.length < 3) {
+        prompts.add(const AiChatSystemPrompt(name: '', prompt: ''));
+      }
+      if (prompts.length > 3) {
+        return prompts.take(3).toList();
+      }
+      return prompts;
+    } catch (_) {
+      return _defaultAiChatSystemPrompts();
+    }
+  }
+
   Future<void> setSyncEnabled(bool enabled) async {
     await _prefs.setBool(_kSyncEnabled, enabled);
     state = state.copyWith(syncEnabled: enabled);
+  }
+
+  Future<void> setThemeStyle(AppThemeStyle style) async {
+    await _prefs.setString(_kThemeStyle, style.toStorageString());
+    state = state.copyWith(themeStyle: style);
+  }
+
+  Future<void> setDarkModeEnabled(bool enabled) async {
+    await _prefs.setBool(_kDarkModeEnabled, enabled);
+    state = state.copyWith(darkModeEnabled: enabled);
   }
 
   Future<void> setQuickLaunchOpenMode(QuickLaunchOpenMode mode) async {
@@ -177,6 +276,23 @@ class AppSettingsController extends StateNotifier<AppSettings> {
     state = state.copyWith(aiExternalApiEnabled: enabled);
   }
 
+  Future<void> setAiExternalProvider(AiExternalProvider provider) async {
+    await _prefs.setString(_kAiExternalProvider, provider.toStorageString());
+    state = state.copyWith(aiExternalProvider: provider);
+  }
+
+  Future<void> setAiExternalBaseUrl(String value) async {
+    final next = value.trim();
+    await _prefs.setString(_kAiExternalBaseUrl, next);
+    state = state.copyWith(aiExternalBaseUrl: next);
+  }
+
+  Future<void> setAiExternalModel(String value) async {
+    final next = value.trim();
+    await _prefs.setString(_kAiExternalModel, next);
+    state = state.copyWith(aiExternalModel: next);
+  }
+
   Future<void> setAiAppleIntelligenceEnabled(bool enabled) async {
     await _prefs.setBool(_kAiAppleIntelligenceEnabled, enabled);
     state = state.copyWith(aiAppleIntelligenceEnabled: enabled);
@@ -197,6 +313,18 @@ class AppSettingsController extends StateNotifier<AppSettings> {
     state = state.copyWith(aiPromptSendKey: key);
   }
 
+  Future<void> setAiImageSendLimit(int value) async {
+    final next = value < 1 ? 1 : value;
+    await _prefs.setInt(_kAiImageSendLimit, next);
+    state = state.copyWith(aiImageSendLimit: next);
+  }
+
+  Future<void> setAiChatContextWindowSize(int value) async {
+    final next = value < 4092 ? 4092 : value;
+    await _prefs.setInt(_kAiChatContextWindowSize, next);
+    state = state.copyWith(aiChatContextWindowSize: next);
+  }
+
   Future<void> setAiPromptPresets(List<AiPromptPreset> presets) async {
     final trimmed = presets
         .map((p) => AiPromptPreset(name: p.name, prompt: p.prompt))
@@ -211,6 +339,43 @@ class AppSettingsController extends StateNotifier<AppSettings> {
     final payload = jsonEncode(normalized.map((p) => p.toMap()).toList());
     await _prefs.setString(_kAiPromptPresets, payload);
     state = state.copyWith(aiPromptPresets: normalized);
+  }
+
+  Future<void> setAiTitleRules(List<AiTitleRule> rules) async {
+    final trimmed = rules
+        .map((rule) => AiTitleRule(name: rule.name, prompt: rule.prompt))
+        .toList();
+    final normalized = List<AiTitleRule>.from(trimmed);
+    while (normalized.length < 3) {
+      normalized.add(const AiTitleRule(name: '', prompt: ''));
+    }
+    if (normalized.length > 3) {
+      normalized.removeRange(3, normalized.length);
+    }
+    final payload = jsonEncode(normalized.map((rule) => rule.toMap()).toList());
+    await _prefs.setString(_kAiTitleRules, payload);
+    state = state.copyWith(aiTitleRules: normalized);
+  }
+
+  Future<void> setAiChatSystemPrompts(List<AiChatSystemPrompt> prompts) async {
+    final trimmed = prompts
+        .map(
+          (prompt) =>
+              AiChatSystemPrompt(name: prompt.name, prompt: prompt.prompt),
+        )
+        .toList();
+    final normalized = List<AiChatSystemPrompt>.from(trimmed);
+    while (normalized.length < 3) {
+      normalized.add(const AiChatSystemPrompt(name: '', prompt: ''));
+    }
+    if (normalized.length > 3) {
+      normalized.removeRange(3, normalized.length);
+    }
+    final payload = jsonEncode(
+      normalized.map((prompt) => prompt.toMap()).toList(),
+    );
+    await _prefs.setString(_kAiChatSystemPrompts, payload);
+    state = state.copyWith(aiChatSystemPrompts: normalized);
   }
 
   Future<void> setLastOpenedNoteId(String? noteId) async {
@@ -229,6 +394,8 @@ class AppSettingsController extends StateNotifier<AppSettings> {
 }
 
 const _kClientId = 'clientId';
+const _kThemeStyle = 'themeStyle';
+const _kDarkModeEnabled = 'darkModeEnabled';
 const _kSyncEnabled = 'syncEnabled';
 const _kQuickLaunchOpenMode = 'quickLaunchOpenMode';
 const _kMacModifierKey = 'macModifierKey';
@@ -238,9 +405,16 @@ const _kCharCountExcludeSymbols = 'charCountExcludeSymbols';
 const _kAiEnabled = 'aiEnabled';
 const _kAiExternalApiEnabled = 'aiExternalApiEnabled';
 const _kAiAppleIntelligenceEnabled = 'aiAppleIntelligenceEnabled';
+const _kAiExternalProvider = 'aiExternalProvider';
+const _kAiExternalBaseUrl = 'aiExternalBaseUrl';
+const _kAiExternalModel = 'aiExternalModel';
 const _kAiPreviewEnabled = 'aiPreviewEnabled';
 const _kAiEditKeyBinding = 'aiEditKeyBinding';
 const _kAiPromptSendKey = 'aiPromptSendKey';
 const _kAiPromptPresets = 'aiPromptPresets';
+const _kAiTitleRules = 'aiTitleRules';
+const _kAiChatSystemPrompts = 'aiChatSystemPrompts';
+const _kAiChatContextWindowSize = 'aiChatContextWindowSize';
+const _kAiImageSendLimit = 'aiImageSendLimit';
 const _kLastOpenedNoteId = 'lastOpenedNoteId';
 const _kLastSyncAt = 'lastSyncAt';

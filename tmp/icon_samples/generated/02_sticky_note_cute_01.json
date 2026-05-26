@@ -1,0 +1,26 @@
+{
+  "slot": "02_sticky_note_cute",
+  "file": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated/02_sticky_note_cute_01.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "requested_size": "1024x1024",
+  "size": {
+    "width": 1024,
+    "height": 1024,
+    "aspect_ratio": "1:1",
+    "image_size": "1K"
+  },
+  "prompt_source": "prompt_json",
+  "prompt_json": {
+    "subject": "Patto のプロ品質アプリアイコン。右上が少しめくれた可愛い付箋メモ。メモアプリと直感的に分かる。ほんの少しキャラクター感があるが、洗練された見た目。",
+    "composition": "1:1のアプリアイコン。中央に大きな付箋を配置。角のめくれで立体感を出す。小サイズでも潰れない、太めで明快な形。",
+    "style": "上質でミニマルなiOSアプリアイコン。柔らかい光、クリーン、余白多め、整ったバランス。プロダクトデザイン品質。",
+    "color_palette": "バターイエロー、クリーム、少量のコーラル。紫は使わない。",
+    "constraints": [
+      "文字や細かすぎる罫線は入れない",
+      "過剰な顔表現は避ける",
+      "付箋メモだとすぐ分かること"
+    ]
+  },
+  "compiled_prompt": "Patto のプロ品質アプリアイコン。右上が少しめくれた可愛い付箋メモ。メモアプリと直感的に分かる。ほんの少しキャラクター感があるが、洗練された見た目。\ncomposition: 1:1のアプリアイコン。中央に大きな付箋を配置。角のめくれで立体感を出す。小サイズでも潰れない、太めで明快な形。\nstyle: 上質でミニマルなiOSアプリアイコン。柔らかい光、クリーン、余白多め、整ったバランス。プロダクトデザイン品質。\nconstraints: 文字や細かすぎる罫線は入れない, 過剰な顔表現は避ける, 付箋メモだとすぐ分かること\ncolor_palette: バターイエロー、クリーム、少量のコーラル。紫は使わない。",
+  "sourceSkill": "generate-image"
+}

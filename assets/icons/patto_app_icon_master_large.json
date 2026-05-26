@@ -1,0 +1,8 @@
+{
+  "slot": "patto_app_icon_master_large",
+  "file": "/Users/shotaro/code/shared/Patto/assets/icons/patto_app_icon_master_large.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "referenceImagePath": "/Users/shotaro/code/shared/Patto/assets/icons/patto_app_icon_master.png",
+  "prompt": "Use the attached app icon as the reference and preserve the same design language.\nKeep the exact same full-bleed mint background, fast memo card concept, centered P, folded corner, three speed lines on the right, and Apple-like premium softness.\nKeep the icon as a true full-bleed app icon with no inner rounded-square panel and no icon-inside-icon look.\nRotate the memo card back into a clear diagonal flying layout, similar to a memo slipping quickly across the screen. Do not make it face straight forward.\nMake the memo card and P much larger inside the icon, with the memo card occupying around 72 to 76 percent of the canvas width while staying fully visible.\nThe memo card should feel clearly larger than the current app icon version, with tighter but still safe margins.\nThe speed lines should scale with the card and remain visible on the right side.\nDo not redesign the icon. Do not add new elements. Do not add extra text.\nKeep the composition clean, strongly diagonal, and elegant for a real iOS/macOS app icon.\nNo purple, no harsh contrast, no icon-inside-icon look.",
+  "source": "final_app_icon_scale_up"
+}

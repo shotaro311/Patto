@@ -1,0 +1,8 @@
+{
+  "slot": "patto_app_icon_master",
+  "file": "/Users/shotaro/code/shared/Patto/assets/icons/patto_app_icon_master.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "referenceImagePath": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2_variants_contrast/02_fast_memo_centered_p_contrast_01.jpg",
+  "prompt": "Use the attached icon as the reference and keep the same core design language.\nCreate a production-ready Apple-style app icon master for Patto.\nKeep the fast flying memo card, the large centered P, the folded corner, and exactly three speed lines on the right.\nImportant: remove the inner rounded-square panel and redesign this as one proper full-bleed app icon composition.\nThe entire square canvas should be the icon background, edge to edge, with no outer white corners and no icon-inside-icon look.\nUse a soft mint full background with very subtle shading only, not an obvious gradient.\nKeep the memo card premium, softly embossed, and clearly readable. Make the centered P elegant, legible, and slightly raised.\nCenter the composition with safe margins suitable for iOS and macOS app icons, knowing the OS will round the corners.\nKeep it minimal, polished, cute, and Apple-like.\nNo extra text, no extra symbols, no purple, no transparency, no photo realism.",
+  "source": "final_app_icon_reference_edit"
+}

@@ -12,7 +12,9 @@ InputDecoration appInputDecoration({
     hintText: hintText,
     prefixIcon: prefixIcon,
     suffixIcon: suffixIcon,
-    border: const OutlineInputBorder(),
     isDense: isDense,
+    contentPadding: isDense == true
+        ? const EdgeInsets.symmetric(horizontal: 16, vertical: 14)
+        : null,
   );
 }

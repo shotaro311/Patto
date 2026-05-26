@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Patto Icon Samples</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+        background: #ece8dd;
+        color: #2f332f;
+      }
+      .wrap {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 48px;
+        padding: 48px;
+      }
+      .card {
+        background: #faf8f2;
+        border: 1px solid #ddd7ca;
+        border-radius: 28px;
+        padding: 28px;
+        box-shadow: 0 16px 32px rgba(111, 117, 109, 0.08);
+      }
+      .label {
+        margin: 0 0 18px;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        border-radius: 26%;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card">
+        <h1 class="label">案1: メモパッドまなざし</h1>
+        <img id="memo-eyes" src="./patto-memo-eyes.svg" alt="Patto icon concept memo eyes" />
+      </section>
+      <section class="card">
+        <h1 class="label">案2: ふせんぽてっと</h1>
+        <img id="sticky-note" src="./patto-sticky-note.svg" alt="Patto icon concept sticky note" />
+      </section>
+    </main>
+  </body>
+  </html>

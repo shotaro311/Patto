@@ -1,0 +1,8 @@
+{
+  "slot": "02_fast_memo_centered_p_contrast",
+  "file": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2_variants_contrast/02_fast_memo_centered_p_contrast_01.jpg",
+  "model": "gemini-3.1-flash-image-preview",
+  "referenceImagePath": "/Users/shotaro/code/shared/Patto/tmp/icon_samples/generated_v2_variants/02_fast_memo_centered_p_01.jpg",
+  "prompt": "Use the attached app icon as the reference and keep the exact same composition.\nDo not redesign the icon. Keep the same mint rounded-square background, the same memo card angle, the same three speed lines, and the same large centered P.\nCreate a slightly higher-contrast version.\nMake the P more legible with a clearer embossed depth, slightly deeper shadows, and a touch more separation from the memo paper.\nMake the memo edge, fold corner, and speed lines a little clearer as well.\nKeep it elegant, soft, Apple-like, and premium. Do not make it harsh or noisy.\nNo new text, no purple, no extra elements.",
+  "source": "reference_edit_high_contrast"
+}
